@@ -44,10 +44,11 @@ impl<P: Atomic> GenericCounter<P> {
 
     /// Create a [`GenericCounter`] with the `opts` options.
     pub fn with_opts(opts: Opts) -> Result<Self> {
-        Self::with_opts_and_label_values(&opts, &[])
+        let empty_labels: [String; 0] = [];
+        Self::with_opts_and_label_values(&opts, &empty_labels)
     }
 
-    fn with_opts_and_label_values(opts: &Opts, label_values: &[&str]) -> Result<Self> {
+    fn with_opts_and_label_values(opts: &Opts, label_values: &[impl AsRef<str>]) -> Result<Self> {
         let v = Value::new(opts, ValueType::Counter, P::T::from_i64(0), label_values)?;
         Ok(Self { v: Arc::new(v) })
     }
@@ -126,7 +127,7 @@ impl<P: Atomic> MetricVecBuilder for CounterVecBuilder<P> {
     type M = GenericCounter<P>;
     type P = Opts;
 
-    fn build(&self, opts: &Opts, vals: &[&str]) -> Result<Self::M> {
+    fn build(&self, opts: &Opts, vals: &[impl AsRef<str>]) -> Result<Self::M> {
         Self::M::with_opts_and_label_values(opts, vals)
     }
 }
@@ -282,7 +283,10 @@ impl<P: Atomic> GenericLocalCounterVec<P> {
 
     /// Get a [`GenericLocalCounter`] by label values.
     /// See more [MetricVec::with_label_values].
-    pub fn with_label_values<'a>(&'a mut self, vals: &[&str]) -> &'a mut GenericLocalCounter<P> {
+    pub fn with_label_values<'a>(
+        &'a mut self,
+        vals: &[impl AsRef<str>],
+    ) -> &'a mut GenericLocalCounter<P> {
         let hash = self.vec.v.hash_label_values(vals).unwrap();
         let vec = &self.vec;
         self.local

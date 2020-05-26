@@ -21,7 +21,7 @@ pub trait MetricVecBuilder: Send + Sync + Clone {
     type P: Describer + Sync + Send + Clone;
 
     /// `build` builds a [`Metric`] with option and corresponding label names.
-    fn build(&self, _: &Self::P, _: &[&str]) -> Result<Self::M>;
+    fn build(&self, _: &Self::P, _: &[impl AsRef<str>]) -> Result<Self::M>;
 }
 
 #[derive(Debug)]
@@ -49,7 +49,7 @@ impl<T: MetricVecBuilder> MetricVecCore<T> {
         m
     }
 
-    pub fn get_metric_with_label_values(&self, vals: &[&str]) -> Result<T::M> {
+    pub fn get_metric_with_label_values(&self, vals: &[impl AsRef<str>]) -> Result<T::M> {
         let h = self.hash_label_values(vals)?;
 
         if let Some(metric) = self.children.read().get(&h).cloned() {
@@ -97,7 +97,7 @@ impl<T: MetricVecBuilder> MetricVecCore<T> {
         self.children.write().clear();
     }
 
-    pub(crate) fn hash_label_values(&self, vals: &[&str]) -> Result<u64> {
+    pub(crate) fn hash_label_values(&self, vals: &[impl AsRef<str>]) -> Result<u64> {
         if vals.len() != self.desc.variable_labels.len() {
             return Err(Error::InconsistentCardinality {
                 expect: self.desc.variable_labels.len(),
@@ -107,7 +107,7 @@ impl<T: MetricVecBuilder> MetricVecCore<T> {
 
         let mut h = FnvHasher::default();
         for val in vals {
-            h.write(val.as_bytes());
+            h.write(val.as_ref().as_bytes());
         }
 
         Ok(h.finish())
@@ -153,7 +153,7 @@ impl<T: MetricVecBuilder> MetricVecCore<T> {
         Ok(values)
     }
 
-    fn get_or_create_metric(&self, hash: u64, label_values: &[&str]) -> Result<T::M> {
+    fn get_or_create_metric(&self, hash: u64, label_values: &[impl AsRef<str>]) -> Result<T::M> {
         let mut children = self.children.write();
         // Check exist first.
         if let Some(metric) = children.get(&hash).cloned() {
@@ -221,7 +221,7 @@ impl<T: MetricVecBuilder> MetricVec<T> {
     /// an alternative to avoid that type of mistake. For higher label numbers, the
     /// latter has a much more readable (albeit more verbose) syntax, but it comes
     /// with a performance overhead (for creating and processing the Labels map).
-    pub fn get_metric_with_label_values(&self, vals: &[&str]) -> Result<T::M> {
+    pub fn get_metric_with_label_values(&self, vals: &[impl AsRef<str>]) -> Result<T::M> {
         self.v.get_metric_with_label_values(vals)
     }
 
@@ -244,7 +244,7 @@ impl<T: MetricVecBuilder> MetricVec<T> {
     /// `with_label_values` works as `get_metric_with_label_values`, but panics if an error
     /// occurs. The method allows neat syntax like:
     ///     httpReqs.with_label_values("404", "POST").inc()
-    pub fn with_label_values(&self, vals: &[&str]) -> T::M {
+    pub fn with_label_values(&self, vals: &[impl AsRef<str>]) -> T::M {
         self.get_metric_with_label_values(vals).unwrap()
     }
 
