@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.12.0
+
+ - Improvement: Fix format string in panic!() calls (#391)
+
+ - Improvement: Replace regex with memchr (#385)
+
+ - Improvement: Update reqwest requirement from ^0.10 to ^0.11 (#379)
+
 ## 0.11.0
 
 - Improvement: Switch to more efficient `fd_count()` for `process_open_fds` (#357).

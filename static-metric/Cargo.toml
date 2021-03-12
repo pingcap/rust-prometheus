@@ -19,7 +19,7 @@ lazy_static = "1.4"
 
 [dev-dependencies]
 criterion = "0.3"
-prometheus = { version = "0.11.0", path = "../" }
+prometheus = { path = "../" }
 
 [features]
 default = []
