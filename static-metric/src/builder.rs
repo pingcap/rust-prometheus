@@ -201,7 +201,7 @@ impl<'a> MetricBuilderContext<'a> {
 
         quote! {
             #[allow(missing_copy_implementations)]
-            pub struct #struct_name {
+            pub(super) struct #struct_name {
                 #(
                     pub #field_names: #member_types,
                 )*
