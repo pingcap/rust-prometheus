@@ -89,6 +89,12 @@ pub fn register_static_histogram_vec(input: TokenStream) -> TokenStream {
     register_static_vec("histogram", input)
 }
 
+/// Register a `IntHistogramVec` and create static metrics from it.
+#[proc_macro]
+pub fn register_static_int_histogram_vec(input: TokenStream) -> TokenStream {
+    register_static_vec("int_histogram", input)
+}
+
 /// Procedural macro handler for `register_static_xxx_vec!`.
 fn register_static_vec(register_type: &str, input: TokenStream) -> TokenStream {
     let invoking: RegisterMethodInvoking = syn::parse(input).unwrap();

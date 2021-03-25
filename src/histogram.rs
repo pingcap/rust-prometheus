@@ -22,9 +22,16 @@ use crate::vec::{MetricVec, MetricVecBuilder};
 /// tailored to broadly measure the response time (in seconds) of a
 /// network service. Most likely, however, you will be required to define
 /// buckets customized to your use case.
-pub const DEFAULT_BUCKETS: &[f64; 11] = &[
+pub const DEFAULT_FLOAT_BUCKETS: &[f64; 11] = &[
     0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
 ];
+/// Alias for new `DEFAULT_FLOAT_BUCKETS`
+/// This will be going away.
+pub const DEFAULT_BUCKETS: &[f64; 11] = DEFAULT_FLOAT_BUCKETS;
+
+/// Integer equivalent to `DEFAULT_FLOAT_BUCKETS`
+pub const DEFAULT_INT_BUCKETS: &[u64; 11] =
+    &[5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000];
 
 /// Used for the label that defines the upper bound of a
 /// bucket of a histogram ("le" -> "less or equal").
@@ -41,9 +48,34 @@ fn check_bucket_label(label: &str) -> Result<()> {
     Ok(())
 }
 
-fn check_and_adjust_buckets(mut buckets: Vec<f64>) -> Result<Vec<f64>> {
+fn check_and_adjust_int_buckets(mut buckets: Vec<u64>) -> Result<Vec<u64>> {
     if buckets.is_empty() {
-        buckets = Vec::from(DEFAULT_BUCKETS as &'static [f64]);
+        buckets = Vec::from(DEFAULT_INT_BUCKETS as &'static [u64]);
+    }
+
+    for (i, upper_bound) in buckets.iter().enumerate() {
+        if i < (buckets.len() - 1) && *upper_bound >= buckets[i + 1] {
+            return Err(Error::Msg(format!(
+                "histogram buckets must be in increasing \
+                 order: {} >= {}",
+                upper_bound,
+                buckets[i + 1]
+            )));
+        }
+    }
+
+    let tail = *buckets.last().unwrap();
+    if tail == u64::MAX {
+        // The max bucket is implicit. Remove it here.
+        buckets.pop();
+    }
+
+    Ok(buckets)
+}
+
+fn check_and_adjust_float_buckets(mut buckets: Vec<f64>) -> Result<Vec<f64>> {
+    if buckets.is_empty() {
+        buckets = Vec::from(DEFAULT_FLOAT_BUCKETS as &'static [f64]);
     }
 
     for (i, upper_bound) in buckets.iter().enumerate() {
@@ -65,12 +97,18 @@ fn check_and_adjust_buckets(mut buckets: Vec<f64>) -> Result<Vec<f64>> {
 
     Ok(buckets)
 }
+pub trait ShardWithValueType {
+    type ValueType: Atomic;
+}
 
+pub trait IntoLocal {
+
+}
 /// A struct that bundles the options for creating a [`Histogram`] metric. It is
 /// mandatory to set Name and Help to a non-empty string. All other fields are
 /// optional and can safely be left at their zero value.
 #[derive(Clone, Debug)]
-pub struct HistogramOpts {
+pub struct HistogramContainer<T> {
     /// A container holding various options.
     pub common_opts: Opts,
 
@@ -79,18 +117,37 @@ pub struct HistogramOpts {
     /// values must be sorted in strictly increasing order. There is no need
     /// to add a highest bucket with +Inf bound, it will be added
     /// implicitly. The default value is DefBuckets.
-    pub buckets: Vec<f64>,
+    pub buckets: Vec<T>,
 }
+
+/// f64 based HistogramContainer<T>
+pub type HistogramOpts = HistogramContainer<f64>;
+
+/// u64 base HistogramContainer<T>
+/// Might be useful when trying to squeeze more performance out of some metrics calls
+pub type IntHistogramOpts = HistogramContainer<u64>;
 
 impl HistogramOpts {
     /// Create a [`HistogramOpts`] with the `name` and `help` arguments.
-    pub fn new<S1: Into<String>, S2: Into<String>>(name: S1, help: S2) -> HistogramOpts {
+    pub fn new<S1: Into<String>, S2: Into<String>>(name: S1, help: S2) -> Self {
         HistogramOpts {
             common_opts: Opts::new(name, help),
-            buckets: Vec::from(DEFAULT_BUCKETS as &'static [f64]),
+            buckets: Vec::from(DEFAULT_FLOAT_BUCKETS as &'static [f64]),
         }
     }
+}
 
+impl IntHistogramOpts {
+    /// Create a [`HistogramOpts`] with the `name` and `help` arguments.
+    pub fn new<S1: Into<String>, S2: Into<String>>(name: S1, help: S2) -> Self {
+        IntHistogramOpts {
+            common_opts: Opts::new(name, help),
+            buckets: Vec::from(DEFAULT_INT_BUCKETS as &'static [u64]),
+        }
+    }
+}
+
+impl<T> HistogramContainer<T> {
     /// `namespace` sets the namespace.
     pub fn namespace<S: Into<String>>(mut self, namespace: S) -> Self {
         self.common_opts.namespace = namespace.into();
@@ -131,9 +188,8 @@ impl HistogramOpts {
     pub fn fq_name(&self) -> String {
         self.common_opts.fq_name()
     }
-
     /// `buckets` set the buckets.
-    pub fn buckets(mut self, buckets: Vec<f64>) -> Self {
+    pub fn buckets(mut self, buckets: Vec<T>) -> Self {
         self.buckets = buckets;
         self
     }
@@ -149,7 +205,22 @@ impl From<Opts> for HistogramOpts {
     fn from(opts: Opts) -> HistogramOpts {
         HistogramOpts {
             common_opts: opts,
-            buckets: Vec::from(DEFAULT_BUCKETS as &'static [f64]),
+            buckets: Vec::from(DEFAULT_FLOAT_BUCKETS as &'static [f64]),
+        }
+    }
+}
+
+impl Describer for IntHistogramOpts {
+    fn describe(&self) -> Result<Desc> {
+        self.common_opts.describe()
+    }
+}
+
+impl From<Opts> for IntHistogramOpts {
+    fn from(opts: Opts) -> IntHistogramOpts {
+        IntHistogramOpts {
+            common_opts: opts,
+            buckets: Vec::from(DEFAULT_INT_BUCKETS as &'static [u64]),
         }
     }
 }
@@ -158,11 +229,13 @@ impl From<Opts> for HistogramOpts {
 ///
 /// See [`HistogramCore`] for details.
 #[derive(Debug)]
-struct Shard {
-    sum: AtomicF64,
+struct GenericShard<T> {
+    sum: T,
     count: AtomicU64,
     buckets: Vec<AtomicU64>,
 }
+type Shard = GenericShard<AtomicF64>;
+type IntShard = GenericShard<AtomicU64>;
 
 impl Shard {
     fn new(num_buckets: usize) -> Self {
@@ -173,6 +246,21 @@ impl Shard {
 
         Shard {
             sum: AtomicF64::new(0.0),
+            count: AtomicU64::new(0),
+            buckets,
+        }
+    }
+}
+
+impl IntShard {
+    fn new(num_buckets: usize) -> Self {
+        let mut buckets = Vec::new();
+        for _ in 0..num_buckets {
+            buckets.push(AtomicU64::new(0));
+        }
+
+        IntShard {
+            sum: AtomicU64::new(0),
             count: AtomicU64::new(0),
             buckets,
         }
@@ -306,7 +394,7 @@ impl ShardAndCount {
 /// operations switch hot and cold, wait for all `observe` calls to finish on
 /// the previously hot now cold shard and then expose the consistent snapshot.
 #[derive(Debug)]
-pub struct HistogramCore {
+pub struct GenericHistogramCore<T, U> {
     desc: Desc,
     label_pairs: Vec<proto::LabelPair>,
 
@@ -321,9 +409,20 @@ pub struct HistogramCore {
     shard_and_count: ShardAndCount,
     /// The two shards where `shard_and_count` determines which one is the hot
     /// and which one the cold at any given point in time.
-    shards: [Shard; 2],
+    shards: [U; 2],
 
-    upper_bounds: Vec<f64>,
+    upper_bounds: Vec<T>,
+}
+
+pub type HistogramCore = GenericHistogramCore<f64, Shard>;
+pub type IntHistogramCore = GenericHistogramCore<u64, IntShard>;
+
+impl<T: std::cmp::PartialOrd, U> GenericHistogramCore<T, U> {
+
+
+    fn sample_count(&self) -> u64 {
+        self.shard_and_count.get().1
+    }
 }
 
 impl HistogramCore {
@@ -339,7 +438,7 @@ impl HistogramCore {
 
         let label_pairs = make_label_pairs(&desc, label_values)?;
 
-        let buckets = check_and_adjust_buckets(opts.buckets.clone())?;
+        let buckets = check_and_adjust_float_buckets(opts.buckets.clone())?;
 
         Ok(HistogramCore {
             desc,
@@ -354,7 +453,82 @@ impl HistogramCore {
         })
     }
 
-    /// Record a given observation (f64) in the histogram.
+    /// Make a snapshot of the current histogram state exposed as a Protobuf
+    /// struct.
+    //
+    // Acquire the collect lock, switch the hot and the cold shard, wait for all
+    // remaining `observe` calls to finish on the previously hot now cold shard,
+    // snapshot the data, update the now hot shard and reset the cold shard.
+    pub fn proto(&self) -> proto::Histogram {
+        let collect_guard = self.collect_lock.lock().expect("Lock poisoned");
+
+        // `flip` needs to use AcqRel ordering to ensure the lock operation
+        // above stays above and the histogram operations (especially the shard
+        // resets) below stay below.
+        let (cold_shard_index, overall_count) = self.shard_and_count.flip(Ordering::AcqRel);
+
+        let cold_shard = &self.shards[usize::from(cold_shard_index)];
+        let hot_shard = &self.shards[usize::from(cold_shard_index.inverse())];
+
+        // Wait for all currently active `observe` calls on the now cold shard
+        // to finish. The above call to `flip` redirects all future `observe`
+        // calls to the other previously cold, now hot, shard. Thus once the
+        // cold shard counter equals the value of the global counter when the
+        // shards were flipped, all in-progress `observe` calls are done. With
+        // all of them done, the cold shard is now in a consistent state.
+        //
+        // `observe` uses `Release` ordering. `compare_and_swap` needs to use
+        // `Acquire` ordering to ensure that (1) one sees all the previous
+        // `observe` stores to the counter and (2) to ensure the below shard
+        // modifications happen after this point, thus the shard is not modified
+        // by any `observe` operations.
+        while overall_count
+            != cold_shard.count.compare_and_swap(
+                overall_count,
+                // While at it, reset cold shard count on success.
+                0,
+                Ordering::Acquire,
+            )
+        {}
+
+        // Get cold shard sum and reset to 0.
+        //
+        // Use `Acquire` for load and `Release` for store to ensure not to
+        // interfere with previous or upcoming collect calls.
+        let cold_shard_sum = cold_shard.sum.swap(0.0, Ordering::AcqRel);
+
+        let mut h = proto::Histogram::default();
+        h.set_sample_sum(cold_shard_sum as f64);
+        h.set_sample_count(overall_count);
+
+        let mut cumulative_count = 0;
+        let mut buckets = Vec::with_capacity(self.upper_bounds.len());
+        for (i, upper_bound) in self.upper_bounds.iter().enumerate() {
+            // Reset the cold shard and update the hot shard.
+            //
+            // Use `Acquire` for load and `Release` for store to ensure not to
+            // interfere with previous or upcoming collect calls.
+            let cold_bucket_count = cold_shard.buckets[i].swap(0, Ordering::AcqRel);
+            hot_shard.buckets[i].inc_by(cold_bucket_count);
+
+            cumulative_count += cold_bucket_count;
+            let mut b = proto::Bucket::default();
+            b.set_cumulative_count(cumulative_count);
+            b.set_upper_bound(*upper_bound as f64);
+            buckets.push(b);
+        }
+        h.set_bucket(from_vec!(buckets));
+
+        // Update the hot shard.
+        hot_shard.count.inc_by(overall_count);
+        hot_shard.sum.inc_by(cold_shard_sum);
+
+        drop(collect_guard);
+
+        h
+    }
+
+    /// Record a given observation (T) in the histogram.
     //
     // First increase the overall observation counter and thus learn which shard
     // is the current hot shard. Subsequently on the hot shard update the
@@ -386,18 +560,55 @@ impl HistogramCore {
         shard.count.inc_by_with_ordering(1, Ordering::Release);
     }
 
+    fn sample_sum(&self) -> f64 {
+        // Make sure to not overlap with any collect calls, as they might flip
+        // the hot and cold shards.
+        let _guard = self.collect_lock.lock().expect("Lock poisoned");
+
+        let (shard_index, _count) = self.shard_and_count.get();
+        self.shards[shard_index as usize].sum.get()
+    }
+
+}
+
+impl IntHistogramCore {
+    pub fn new(opts: &IntHistogramOpts, label_values: &[&str]) -> Result<IntHistogramCore> {
+        let desc = opts.describe()?;
+
+        for name in &desc.variable_labels {
+            check_bucket_label(name)?;
+        }
+        for pair in &desc.const_label_pairs {
+            check_bucket_label(pair.get_name())?;
+        }
+
+        let label_pairs = make_label_pairs(&desc, label_values)?;
+
+        let buckets = check_and_adjust_int_buckets(opts.buckets.clone())?;
+
+        Ok(IntHistogramCore {
+            desc,
+            label_pairs,
+
+            collect_lock: Mutex::new(()),
+
+            shard_and_count: ShardAndCount::new(),
+            shards: [IntShard::new(buckets.len()), IntShard::new(buckets.len())],
+
+            upper_bounds: buckets,
+        })
+    }
+
     /// Make a snapshot of the current histogram state exposed as a Protobuf
     /// struct.
     //
     // Acquire the collect lock, switch the hot and the cold shard, wait for all
     // remaining `observe` calls to finish on the previously hot now cold shard,
     // snapshot the data, update the now hot shard and reset the cold shard.
+    // See `HistogramCore` implementation for detailed comments.
     pub fn proto(&self) -> proto::Histogram {
         let collect_guard = self.collect_lock.lock().expect("Lock poisoned");
 
-        // `flip` needs to use AcqRel ordering to ensure the lock operation
-        // above stays above and the histogram operations (especially the shard
-        // resets) below stay below.
         let (cold_shard_index, overall_count) = self.shard_and_count.flip(Ordering::AcqRel);
 
         let cold_shard = &self.shards[usize::from(cold_shard_index)];
@@ -427,30 +638,23 @@ impl HistogramCore {
             .is_err()
         {}
 
-        // Get cold shard sum and reset to 0.
-        //
-        // Use `Acquire` for load and `Release` for store to ensure not to
-        // interfere with previous or upcoming collect calls.
-        let cold_shard_sum = cold_shard.sum.swap(0.0, Ordering::AcqRel);
+        let cold_shard_sum = cold_shard.sum.swap(0, Ordering::AcqRel);
 
         let mut h = proto::Histogram::default();
-        h.set_sample_sum(cold_shard_sum);
+        h.set_sample_sum(cold_shard_sum as f64);
         h.set_sample_count(overall_count);
 
         let mut cumulative_count = 0;
         let mut buckets = Vec::with_capacity(self.upper_bounds.len());
         for (i, upper_bound) in self.upper_bounds.iter().enumerate() {
             // Reset the cold shard and update the hot shard.
-            //
-            // Use `Acquire` for load and `Release` for store to ensure not to
-            // interfere with previous or upcoming collect calls.
             let cold_bucket_count = cold_shard.buckets[i].swap(0, Ordering::AcqRel);
             hot_shard.buckets[i].inc_by(cold_bucket_count);
 
             cumulative_count += cold_bucket_count;
             let mut b = proto::Bucket::default();
             b.set_cumulative_count(cumulative_count);
-            b.set_upper_bound(*upper_bound);
+            b.set_upper_bound((*upper_bound) as f64);
             buckets.push(b);
         }
         h.set_bucket(from_vec!(buckets));
@@ -464,7 +668,39 @@ impl HistogramCore {
         h
     }
 
-    fn sample_sum(&self) -> f64 {
+    /// Record a given observation (T) in the histogram.
+    //
+    // First increase the overall observation counter and thus learn which shard
+    // is the current hot shard. Subsequently on the hot shard update the
+    // corresponding bucket count, adjust the shard's sum and finally increase
+    // the shard's count.
+    pub fn observe(&self, v: u64) {
+        // The collect code path uses `self.shard_and_count` and
+        // `self.shards[x].count` to ensure not to collect data from a shard
+        // while observe calls are still operating on it.
+        //
+        // To ensure the above, this `inc` needs to use `Acquire` ordering to
+        // force anything below this line to stay below it.
+        let (shard_index, _count) = self.shard_and_count.inc(Ordering::Acquire);
+
+        let shard: &IntShard = &self.shards[usize::from(shard_index)];
+
+        // Try find the bucket.
+        let mut iter = self
+            .upper_bounds
+            .iter()
+            .enumerate()
+            .filter(|&(_, f)| v <= *f);
+        if let Some((i, _)) = iter.next() {
+            shard.buckets[i].inc_by(1);
+        }
+
+        shard.sum.inc_by(v);
+        // Use `Release` ordering to ensure all operations above stay above.
+        shard.count.inc_by_with_ordering(1, Ordering::Release);
+    }
+
+    fn sample_sum(&self) -> u64 {
         // Make sure to not overlap with any collect calls, as they might flip
         // the hot and cold shards.
         let _guard = self.collect_lock.lock().expect("Lock poisoned");
@@ -473,11 +709,7 @@ impl HistogramCore {
         self.shards[shard_index as usize].sum.get()
     }
 
-    fn sample_count(&self) -> u64 {
-        self.shard_and_count.get().1
-    }
 }
-
 // We have to wrap libc::timespec in order to implement std::fmt::Debug.
 #[cfg(all(feature = "nightly", target_os = "linux"))]
 pub struct Timespec(libc::timespec);
@@ -577,17 +809,17 @@ mod coarse {
 /// Alternatively, it can be manually stopped and discarded in order to not record its value.
 #[must_use = "Timer should be kept in a variable otherwise it cannot observe duration"]
 #[derive(Debug)]
-pub struct HistogramTimer {
+pub struct GenericHistogramTimer<T> {
     /// A histogram for automatic recording of observations.
-    histogram: Histogram,
+    histogram: T,
     /// Whether the timer has already been observed once.
     observed: bool,
     /// Starting instant for the timer.
     start: Instant,
 }
 
-impl HistogramTimer {
-    fn new(histogram: Histogram) -> Self {
+impl<T> GenericHistogramTimer<T> {
+    fn new(histogram: T) -> Self {
         Self {
             histogram,
             observed: false,
@@ -596,14 +828,19 @@ impl HistogramTimer {
     }
 
     #[cfg(feature = "nightly")]
-    fn new_coarse(histogram: Histogram) -> Self {
-        HistogramTimer {
+    fn new_coarse(histogram: T) -> Self {
+        GenericHistogramTimer::<T> {
             histogram,
             observed: false,
             start: Instant::now_coarse(),
         }
     }
+}
 
+pub type HistogramTimer = GenericHistogramTimer<Histogram>;
+pub type IntHistogramTimer = GenericHistogramTimer<IntHistogram>;
+
+impl HistogramTimer {
     /// Observe and record timer duration (in seconds).
     ///
     /// It observes the floating-point number of seconds elapsed since the timer
@@ -640,7 +877,44 @@ impl HistogramTimer {
     }
 }
 
-impl Drop for HistogramTimer {
+impl IntHistogramTimer {
+    /// Observe and record timer duration (in seconds).
+    ///
+    /// It observes the floating-point number of seconds elapsed since the timer
+    /// started, and it records that value to the attached histogram.
+    pub fn observe_duration(self) {
+        self.stop_and_record();
+    }
+
+    /// Observe, record and return timer duration (in seconds).
+    ///
+    /// It observes and returns a floating-point number for seconds elapsed since
+    /// the timer started, recording that value to the attached histogram.
+    pub fn stop_and_record(self) -> u64 {
+        let mut timer = self;
+        timer.observe(true)
+    }
+
+    /// Observe and return timer duration (in seconds).
+    ///
+    /// It returns a floating-point number of seconds elapsed since the timer started,
+    /// without recording to any histogram.
+    pub fn stop_and_discard(self) -> u64 {
+        let mut timer = self;
+        timer.observe(false)
+    }
+
+    fn observe(&mut self, record: bool) -> u64 {
+        let v = self.start.elapsed_sec();
+        self.observed = true;
+        if record {
+            self.histogram.observe(v as u64);
+        }
+        v as u64
+    }
+}
+
+impl<T> Drop for GenericHistogramTimer<T> {
     fn drop(&mut self) {
         if !self.observed {
             self.observe(true);
@@ -666,9 +940,53 @@ impl Drop for HistogramTimer {
 /// [1]: https://prometheus.io/docs/prometheus/latest/querying/functions/#histogram_quantile
 /// [2]: https://prometheus.io/docs/practices/histograms/
 #[derive(Clone, Debug)]
-pub struct Histogram {
-    core: Arc<HistogramCore>,
+pub struct GenericHistogram<T> {
+    core: Arc<T>,
 }
+
+impl<T> GenericHistogram<T> {
+
+
+    /// Return a [`HistogramTimer`] to track a duration.
+    pub fn start_timer(&self) -> GenericHistogramTimer::<GenericHistogram<T>> {
+        GenericHistogramTimer::<GenericHistogram<T>>::new(self.clone())
+    }
+
+    /// Return a [`HistogramTimer`] to track a duration.
+    /// It is faster but less precise.
+    #[cfg(feature = "nightly")]
+    pub fn start_coarse_timer(&self) -> GenericHistogramTimer::<GenericHistogram<T>> {
+        GenericHistogramTimer::<GenericHistogram<T>>::new_coarse(self.clone())
+    }
+
+    /// Observe execution time of a closure, in second.
+    pub fn observe_closure_duration<F, V>(&self, f: F) -> V
+    where
+        F: FnOnce() -> V,
+    {
+        let instant = Instant::now();
+        let res = f();
+        let elapsed = instant.elapsed_sec();
+        self.observe(elapsed);
+        res
+    }
+
+    /// Observe execution time of a closure, in second.
+    #[cfg(feature = "nightly")]
+    pub fn observe_closure_duration_coarse<F, V>(&self, f: F) -> V
+    where
+        F: FnOnce() -> V,
+    {
+        let instant = Instant::now_coarse();
+        let res = f();
+        let elapsed = instant.elapsed_sec();
+        self.observe(elapsed);
+        res
+    }
+}
+
+pub type Histogram = GenericHistogram<HistogramCore>;
+pub type IntHistogram = GenericHistogram<IntHistogramCore>;
 
 impl Histogram {
     /// `with_opts` creates a [`Histogram`] with the `opts` options.
@@ -686,49 +1004,10 @@ impl Histogram {
             core: Arc::new(core),
         })
     }
-}
 
-impl Histogram {
     /// Add a single observation to the [`Histogram`].
     pub fn observe(&self, v: f64) {
         self.core.observe(v)
-    }
-
-    /// Return a [`HistogramTimer`] to track a duration.
-    pub fn start_timer(&self) -> HistogramTimer {
-        HistogramTimer::new(self.clone())
-    }
-
-    /// Return a [`HistogramTimer`] to track a duration.
-    /// It is faster but less precise.
-    #[cfg(feature = "nightly")]
-    pub fn start_coarse_timer(&self) -> HistogramTimer {
-        HistogramTimer::new_coarse(self.clone())
-    }
-
-    /// Observe execution time of a closure, in second.
-    pub fn observe_closure_duration<F, T>(&self, f: F) -> T
-    where
-        F: FnOnce() -> T,
-    {
-        let instant = Instant::now();
-        let res = f();
-        let elapsed = instant.elapsed_sec();
-        self.observe(elapsed);
-        res
-    }
-
-    /// Observe execution time of a closure, in second.
-    #[cfg(feature = "nightly")]
-    pub fn observe_closure_duration_coarse<F, T>(&self, f: F) -> T
-    where
-        F: FnOnce() -> T,
-    {
-        let instant = Instant::now_coarse();
-        let res = f();
-        let elapsed = instant.elapsed_sec();
-        self.observe(elapsed);
-        res
     }
 
     /// Return a [`LocalHistogram`] for single thread usage.
@@ -747,7 +1026,73 @@ impl Histogram {
     }
 }
 
+impl IntHistogram {
+    /// `with_opts` creates a [`Histogram`] with the `opts` options.
+    pub fn with_opts(opts: IntHistogramOpts) -> Result<IntHistogram> {
+        IntHistogram::with_opts_and_label_values(&opts, &[])
+    }
+
+    fn with_opts_and_label_values(
+        opts: &IntHistogramOpts,
+        label_values: &[&str],
+    ) -> Result<IntHistogram> {
+        let core = IntHistogramCore::new(opts, label_values)?;
+
+        Ok(IntHistogram {
+            core: Arc::new(core),
+        })
+    }
+
+    /// Add a single observation to the [`Histogram`].
+    pub fn observe(&self, v: u64) {
+        self.core.observe(v)
+    }
+
+    /// Return a [`IntLocalHistogram`] for single thread usage.
+    pub fn local(&self) -> IntLocalHistogram {
+        IntLocalHistogram::new(self.clone())
+    }
+
+    /// Return accumulated sum of all samples.
+    pub fn get_sample_sum(&self) -> u64 {
+        self.core.sample_sum()
+    }
+
+    /// Return count of all samples.
+    pub fn get_sample_count(&self) -> u64 {
+        self.core.sample_count()
+    }
+}
+
+impl Clone for Histogram {
+    fn clone(&self) -> Histogram {
+        let core = self.core.clone();
+        let lh = Histogram { core };
+        lh
+    }
+}
+
+impl Clone for IntHistogram {
+    fn clone(&self) -> IntHistogram {
+        let core = self.core.clone();
+        let lh = IntHistogram { core };
+        lh
+    }
+}
+
 impl Metric for Histogram {
+    fn metric(&self) -> proto::Metric {
+        let mut m = proto::Metric::default();
+        m.set_label(from_vec!(self.core.label_pairs.clone()));
+
+        let h = self.core.proto();
+        m.set_histogram(h);
+
+        m
+    }
+}
+
+impl Metric for IntHistogram {
     fn metric(&self) -> proto::Metric {
         let mut m = proto::Metric::default();
         m.set_label(from_vec!(self.core.label_pairs.clone()));
@@ -775,8 +1120,26 @@ impl Collector for Histogram {
     }
 }
 
+impl Collector for IntHistogram {
+    fn desc(&self) -> Vec<&Desc> {
+        vec![&self.core.desc]
+    }
+
+    fn collect(&self) -> Vec<proto::MetricFamily> {
+        let mut m = proto::MetricFamily::default();
+        m.set_name(self.core.desc.fq_name.clone());
+        m.set_help(self.core.desc.help.clone());
+        m.set_field_type(proto::MetricType::HISTOGRAM);
+        m.set_metric(from_vec!(vec![self.metric()]));
+
+        vec![m]
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct HistogramVecBuilder {}
+#[derive(Clone, Debug)]
+pub struct IntHistogramVecBuilder {}
 
 impl MetricVecBuilder for HistogramVecBuilder {
     type M = Histogram;
@@ -784,6 +1147,15 @@ impl MetricVecBuilder for HistogramVecBuilder {
 
     fn build(&self, opts: &HistogramOpts, vals: &[&str]) -> Result<Histogram> {
         Histogram::with_opts_and_label_values(opts, vals)
+    }
+}
+
+impl MetricVecBuilder for IntHistogramVecBuilder {
+    type M = IntHistogram;
+    type P = IntHistogramOpts;
+
+    fn build(&self, opts: &IntHistogramOpts, vals: &[&str]) -> Result<IntHistogram> {
+        IntHistogram::with_opts_and_label_values(opts, vals)
     }
 }
 
@@ -813,6 +1185,31 @@ impl HistogramVec {
     }
 }
 
+pub type IntHistogramVec = MetricVec<IntHistogramVecBuilder>;
+
+impl IntHistogramVec {
+    /// Create a new [`HistogramVec`] based on the provided
+    /// [`HistogramOpts`] and partitioned by the given label names. At least
+    /// one label name must be provided.
+    pub fn new(opts: IntHistogramOpts, label_names: &[&str]) -> Result<IntHistogramVec> {
+        let variable_names = label_names.iter().map(|s| (*s).to_owned()).collect();
+        let opts = opts.variable_labels(variable_names);
+        let metric_vec = MetricVec::create(
+            proto::MetricType::HISTOGRAM,
+            IntHistogramVecBuilder {},
+            opts,
+        )?;
+
+        Ok(metric_vec as IntHistogramVec)
+    }
+
+    /// Return a `IntLocalHistogramVec` for single thread usage.
+    pub fn local(&self) -> IntLocalHistogramVec {
+        let vec = self.clone();
+        IntLocalHistogramVec::new(vec)
+    }
+}
+
 /// Create `count` buckets, each `width` wide, where the lowest
 /// bucket has an upper bound of `start`. The final +Inf bucket is not counted
 /// and not included in the returned slice. The returned slice is meant to be
@@ -836,6 +1233,34 @@ pub fn linear_buckets(start: f64, width: f64, count: usize) -> Result<Vec<f64>> 
 
     let buckets: Vec<_> = (0..count)
         .map(|step| start + width * (step as f64))
+        .collect();
+
+    Ok(buckets)
+}
+
+/// Create `count` buckets, each `width` wide, where the lowest
+/// bucket has an upper bound of `start`. The final +Inf bucket is not counted
+/// and not included in the returned slice. The returned slice is meant to be
+/// used for the Buckets field of [`IntHistogramOpts`].
+///
+/// The function returns an error if `count` is zero or `width` is zero or
+/// negative.
+pub fn linear_int_buckets(start: u64, width: u64, count: usize) -> Result<Vec<u64>> {
+    if count < 1 {
+        return Err(Error::Msg(format!(
+            "LinearBuckets needs a positive count, count: {}",
+            count
+        )));
+    }
+    if width <= 0 {
+        return Err(Error::Msg(format!(
+            "LinearBuckets needs a width greater then 0, width: {}",
+            width
+        )));
+    }
+
+    let buckets: Vec<_> = (0..count)
+        .map(|step| start + width * (step as u64))
         .collect();
 
     Ok(buckets)
@@ -881,6 +1306,46 @@ pub fn exponential_buckets(start: f64, factor: f64, count: usize) -> Result<Vec<
     Ok(buckets)
 }
 
+/// Create `count` buckets, where the lowest bucket has an
+/// upper bound of `start` and each following bucket's upper bound is `factor`
+/// times the previous bucket's upper bound. The final +Inf bucket is not counted
+/// and not included in the returned slice. The returned slice is meant to be
+/// used for the Buckets field of [`HistogramOpts`].
+///
+/// The function returns an error if `count` is zero, if `start` is zero or
+/// negative, or if `factor` is less than or equal 1.
+pub fn exponential_int_buckets(start: u64, factor: u64, count: usize) -> Result<Vec<u64>> {
+    if count < 1 {
+        return Err(Error::Msg(format!(
+            "exponential_buckets needs a positive count, count: {}",
+            count
+        )));
+    }
+    if start <= 0 {
+        return Err(Error::Msg(format!(
+            "exponential_buckets needs a positive start value, \
+             start: {}",
+            start
+        )));
+    }
+    if factor <= 1 {
+        return Err(Error::Msg(format!(
+            "exponential_buckets needs a factor greater than 1, \
+             factor: {}",
+            factor
+        )));
+    }
+
+    let mut next = start;
+    let mut buckets = Vec::with_capacity(count);
+    for _ in 0..count {
+        buckets.push(next);
+        next *= factor;
+    }
+
+    Ok(buckets)
+}
+
 /// `duration_to_seconds` converts Duration to seconds.
 #[inline]
 pub fn duration_to_seconds(d: Duration) -> f64 {
@@ -889,140 +1354,17 @@ pub fn duration_to_seconds(d: Duration) -> f64 {
 }
 
 #[derive(Clone, Debug)]
-pub struct LocalHistogramCore {
-    histogram: Histogram,
+pub struct GenericLocalHistogramCore<T,U> {
+    histogram: GenericHistogram<GenericHistogramCore<T, GenericShard<U>>>,
     counts: Vec<u64>,
     count: u64,
-    sum: f64,
+    sum: T,
 }
 
-/// An unsync [`Histogram`].
-#[derive(Debug)]
-pub struct LocalHistogram {
-    core: RefCell<LocalHistogramCore>,
-}
+pub type LocalHistogramCore = GenericLocalHistogramCore<f64,AtomicF64>;
+pub type IntLocalHistogramCore = GenericLocalHistogramCore<u64,AtomicU64>;
 
-impl Clone for LocalHistogram {
-    fn clone(&self) -> LocalHistogram {
-        let core = self.core.clone();
-        let lh = LocalHistogram { core };
-        lh.clear();
-        lh
-    }
-}
-
-/// An unsync [`HistogramTimer`].
-#[must_use = "Timer should be kept in a variable otherwise it cannot observe duration"]
-#[derive(Debug)]
-pub struct LocalHistogramTimer {
-    /// A local histogram for automatic recording of observations.
-    local: LocalHistogram,
-    /// Whether the timer has already been observed once.
-    observed: bool,
-    /// Starting instant for the timer.
-    start: Instant,
-}
-
-impl LocalHistogramTimer {
-    fn new(histogram: LocalHistogram) -> Self {
-        Self {
-            local: histogram,
-            observed: false,
-            start: Instant::now(),
-        }
-    }
-
-    #[cfg(feature = "nightly")]
-    fn new_coarse(histogram: LocalHistogram) -> Self {
-        Self {
-            local: histogram,
-            observed: false,
-            start: Instant::now_coarse(),
-        }
-    }
-
-    /// Observe and record timer duration (in seconds).
-    ///
-    /// It observes the floating-point number of seconds elapsed since the timer
-    /// started, and it records that value to the attached histogram.
-    pub fn observe_duration(self) {
-        self.stop_and_record();
-    }
-
-    /// Observe, record and return timer duration (in seconds).
-    ///
-    /// It observes and returns a floating-point number for seconds elapsed since
-    /// the timer started, recording that value to the attached histogram.
-    pub fn stop_and_record(self) -> f64 {
-        let mut timer = self;
-        timer.observe(true)
-    }
-
-    /// Observe and return timer duration (in seconds).
-    ///
-    /// It returns a floating-point number of seconds elapsed since the timer started,
-    /// without recording to any histogram.
-    pub fn stop_and_discard(self) -> f64 {
-        let mut timer = self;
-        timer.observe(false)
-    }
-
-    fn observe(&mut self, record: bool) -> f64 {
-        let v = self.start.elapsed_sec();
-        self.observed = true;
-        if record {
-            self.local.observe(v);
-        }
-        v
-    }
-}
-
-impl Drop for LocalHistogramTimer {
-    fn drop(&mut self) {
-        if !self.observed {
-            self.observe(true);
-        }
-    }
-}
-
-impl LocalHistogramCore {
-    fn new(histogram: Histogram) -> LocalHistogramCore {
-        let counts = vec![0; histogram.core.upper_bounds.len()];
-
-        LocalHistogramCore {
-            histogram,
-            counts,
-            count: 0,
-            sum: 0.0,
-        }
-    }
-
-    pub fn observe(&mut self, v: f64) {
-        // Try find the bucket.
-        let mut iter = self
-            .histogram
-            .core
-            .upper_bounds
-            .iter()
-            .enumerate()
-            .filter(|&(_, f)| v <= *f);
-        if let Some((i, _)) = iter.next() {
-            self.counts[i] += 1;
-        }
-
-        self.count += 1;
-        self.sum += v;
-    }
-
-    pub fn clear(&mut self) {
-        for v in &mut self.counts {
-            *v = 0
-        }
-
-        self.count = 0;
-        self.sum = 0.0;
-    }
-
+impl<T,U> GenericLocalHistogramCore<T,U> {
     pub fn flush(&mut self) {
         // No cached metric, return.
         if self.count == 0 {
@@ -1059,14 +1401,239 @@ impl LocalHistogramCore {
         self.clear()
     }
 
-    fn sample_sum(&self) -> f64 {
-        self.sum
-    }
-
     fn sample_count(&self) -> u64 {
         self.count
     }
 }
+
+impl LocalHistogramCore {
+    fn new(histogram: Histogram) -> LocalHistogramCore {
+        let counts = vec![0; histogram.core.upper_bounds.len()];
+
+        LocalHistogramCore {
+            histogram,
+            counts,
+            count: 0,
+            sum: 0.0,
+        }
+    }
+
+    pub fn observe(&mut self, v: f64) {
+        // Try find the bucket.
+        let mut iter = self
+            .histogram
+            .core
+            .upper_bounds
+            .iter()
+            .enumerate()
+            .filter(|&(_, f)| v <= *f);
+        if let Some((i, _)) = iter.next() {
+            self.counts[i] += 1;
+        }
+
+        self.count += 1;
+        self.sum += v;
+    }
+    pub fn clear(&mut self) {
+        for v in &mut self.counts {
+            *v = 0
+        }
+
+        self.count = 0;
+        self.sum = 0.0;
+    }
+    fn sample_sum(&self) -> f64 {
+        self.sum
+    }
+}
+
+impl IntLocalHistogramCore {
+    fn new(histogram: IntHistogram) -> IntLocalHistogramCore {
+        let counts = vec![0; histogram.core.upper_bounds.len()];
+
+        IntLocalHistogramCore {
+            histogram,
+            counts,
+            count: 0,
+            sum: 0,
+        }
+    }
+
+    pub fn observe(&mut self, v: u64) {
+        // Try find the bucket.
+        let mut iter = self
+            .histogram
+            .core
+            .upper_bounds
+            .iter()
+            .enumerate()
+            .filter(|&(_, f)| v <= *f);
+        if let Some((i, _)) = iter.next() {
+            self.counts[i] += 1;
+        }
+
+        self.count += 1;
+        self.sum += v;
+    }
+
+    pub fn clear(&mut self) {
+        for v in &mut self.counts {
+            *v = 0
+        }
+
+        self.count = 0;
+        self.sum = 0;
+    }
+
+    fn sample_sum(&self) -> u64 {
+        self.sum
+    }
+}
+
+/// An unsync [`Histogram`].
+#[derive(Debug)]
+pub struct GenericLocalHistogram<T> {
+    core: RefCell<T>,
+}
+
+pub type LocalHistogram = GenericLocalHistogram<LocalHistogramCore>;
+pub type IntLocalHistogram = GenericLocalHistogram<IntLocalHistogramCore>;
+
+impl Clone for LocalHistogram {
+    fn clone(&self) -> LocalHistogram {
+        let core = self.core.clone();
+        let lh = LocalHistogram { core };
+        lh.clear();
+        lh
+    }
+}
+
+impl Clone for IntLocalHistogram {
+    fn clone(&self) -> IntLocalHistogram {
+        let core = self.core.clone();
+        let lh = IntLocalHistogram { core };
+        lh.clear();
+        lh
+    }
+}
+
+/// An unsync [`HistogramTimer`]ec#[must_use = "Timer should be kept in a variable otherwise it cannot observe duration"]
+#[derive(Debug)]
+pub struct GenericLocalHistogramTimer<T> {
+    /// A local histogram for automatic recording of observations.
+    local: T,
+    /// Whether the timer has already been observed once.
+    observed: bool,
+    /// Starting instant for the timer.
+    start: Instant,
+}
+
+pub type LocalHistogramTimer = GenericLocalHistogramTimer<LocalHistogram>;
+pub type IntLocalHistogramTimer = GenericLocalHistogramTimer<IntLocalHistogram>;
+
+impl LocalHistogramTimer {
+    #[cfg(feature = "nightly")]
+    fn new(histogram: LocalHistogram) -> Self {
+        Self {
+            local: histogram,
+            observed: false,
+            start: Instant::now(),
+        }
+    }
+
+    #[cfg(feature = "nightly")]
+    fn new_coarse(histogram: LocalHistogram) -> Self {
+        Self {
+            local: histogram,
+            observed: false,
+            start: Instant::now_coarse(),
+        }
+    }
+
+    /// Observe and return timer duration (in seconds).
+    ///
+    /// It returns a floating-point number of seconds elapsed since the timer started,
+    /// without recording to any histogram.
+    pub fn stop_and_discard(self) -> f64 {
+        let mut timer = self;
+        timer.observe(false)
+    }
+
+    fn observe(&mut self, record: bool) -> f64 {
+        let v = self.start.elapsed_sec();
+        self.observed = true;
+        if record {
+            self.local.observe(v);
+        }
+        v
+    }
+}
+
+impl IntLocalHistogramTimer {
+    fn new(histogram: IntLocalHistogram) -> Self {
+        Self {
+            local: histogram,
+            observed: false,
+            start: Instant::now(),
+        }
+    }
+
+    #[cfg(feature = "nightly")]
+    fn new_coarse(histogram: IntLocalHistogram) -> Self {
+        Self {
+            local: histogram,
+            observed: false,
+            start: Instant::now_coarse(),
+        }
+    }
+
+    /// Observe and return timer duration (in seconds).
+    ///
+    /// It returns a floating-point number of seconds elapsed since the timer started,
+    /// without recording to any histogram.
+    pub fn stop_and_discard(self) -> u64 {
+        let mut timer = self;
+        timer.observe(false)
+    }
+
+    fn observe(&mut self, record: bool) -> u64 {
+        let v = self.start.elapsed_sec();
+        self.observed = true;
+        if record {
+            self.local.observe(v);
+        }
+        v
+    }
+}
+
+impl<T> GenericLocalHistogramTimer<T> {
+
+    /// Observe and record timer duration (in seconds).
+    ///
+    /// It observes the floating-point number of seconds elapsed since the timer
+    /// started, and it records that value to the attached histogram.
+    pub fn observe_duration(self) {
+        self.stop_and_record();
+    }
+
+    /// Observe, record and return timer duration (in seconds).
+    ///
+    /// It observes and returns a floating-point number for seconds elapsed since
+    /// the timer started, recording that value to the attached histogram.
+    pub fn stop_and_record(self) -> f64 {
+        let mut timer = self;
+        timer.observe(true)
+    }
+}
+
+impl<T> Drop for GenericLocalHistogramTimer<T> {
+    fn drop(&mut self) {
+        if !self.observed {
+            self.observe(true);
+        }
+    }
+}
+
 
 impl LocalHistogram {
     fn new(histogram: Histogram) -> LocalHistogram {
@@ -1139,6 +1706,12 @@ impl LocalHistogram {
     }
 }
 
+impl<T> Drop for GenericLocalHistogram<T> {
+    fn drop(&mut self) {
+        self.flush()
+    }
+}
+
 impl LocalMetric for LocalHistogram {
     /// Flush the local metrics to the [`Histogram`] metric.
     fn flush(&self) {
@@ -1146,17 +1719,30 @@ impl LocalMetric for LocalHistogram {
     }
 }
 
-impl Drop for LocalHistogram {
-    fn drop(&mut self) {
-        self.flush()
+impl LocalMetric for IntLocalHistogram {
+    /// Flush the local metrics to the [`Histogram`] metric.
+    fn flush(&self) {
+        IntLocalHistogram::flush(self);
     }
 }
 
-/// An unsync [`HistogramVec`].
+/// An unsync [`GenericHistogramVec`].
 #[derive(Debug)]
-pub struct LocalHistogramVec {
-    vec: HistogramVec,
-    local: HashMap<u64, LocalHistogram>,
+pub struct GenericLocalHistogramVec<T, U> {
+    vec: T,
+    local: HashMap<u64, U>,
+}
+
+pub type LocalHistogramVec = GenericLocalHistogramVec<HistogramVec, LocalHistogram>;
+pub type IntLocalHistogramVec = GenericLocalHistogramVec<IntHistogramVec, IntLocalHistogram>;
+
+impl<T, U> GenericLocalHistogramVec<T, U> {
+    /// Flush the local metrics to the [`HistogramVec`] metric.
+    pub fn flush(&self) {
+        for h in self.local.values() {
+            h.flush();
+        }
+    }
 }
 
 impl LocalHistogramVec {
@@ -1165,6 +1751,13 @@ impl LocalHistogramVec {
         LocalHistogramVec { vec, local }
     }
 
+    /// Remove a [`LocalHistogram`] by label values.
+    /// See more [`MetricVec::remove_label_values`].
+    pub fn remove_label_values(&mut self, vals: &[&str]) -> Result<()> {
+        let hash = self.vec.v.hash_label_values(vals)?;
+        self.local.remove(&hash);
+        self.vec.v.delete_label_values(vals)
+    }
     /// Get a [`LocalHistogram`] by label values.
     /// See more [`MetricVec::with_label_values`].
     pub fn with_label_values<'a>(&'a mut self, vals: &[&str]) -> &'a LocalHistogram {
@@ -1175,6 +1768,14 @@ impl LocalHistogramVec {
             .or_insert_with(|| vec.with_label_values(vals).local())
     }
 
+}
+
+impl IntLocalHistogramVec {
+    fn new(vec: IntHistogramVec) -> IntLocalHistogramVec {
+        let local = HashMap::with_capacity(vec.v.children.read().len());
+        IntLocalHistogramVec { vec, local }
+    }
+
     /// Remove a [`LocalHistogram`] by label values.
     /// See more [`MetricVec::remove_label_values`].
     pub fn remove_label_values(&mut self, vals: &[&str]) -> Result<()> {
@@ -1183,12 +1784,16 @@ impl LocalHistogramVec {
         self.vec.v.delete_label_values(vals)
     }
 
-    /// Flush the local metrics to the [`HistogramVec`] metric.
-    pub fn flush(&self) {
-        for h in self.local.values() {
-            h.flush();
-        }
+    /// Get a [`IntLocalHistogram`] by label values.
+    /// See more [`MetricVec::with_label_values`].
+    pub fn with_label_values<'a>(&'a mut self, vals: &[&str]) -> &'a IntLocalHistogram {
+        let hash = self.vec.v.hash_label_values(vals).unwrap();
+        let vec = &self.vec;
+        self.local
+            .entry(hash)
+            .or_insert_with(|| vec.with_label_values(vals).local())
     }
+
 }
 
 impl LocalMetric for LocalHistogramVec {
@@ -1201,6 +1806,19 @@ impl LocalMetric for LocalHistogramVec {
 impl Clone for LocalHistogramVec {
     fn clone(&self) -> LocalHistogramVec {
         LocalHistogramVec::new(self.vec.clone())
+    }
+}
+
+impl LocalMetric for IntLocalHistogramVec {
+    /// Flush the local metrics to the [`HistogramVec`] metric.
+    fn flush(&self) {
+        IntLocalHistogramVec::flush(self)
+    }
+}
+
+impl Clone for IntLocalHistogramVec {
+    fn clone(&self) -> IntLocalHistogramVec {
+        IntLocalHistogram::new(self.vec.clone())
     }
 }
 
@@ -1241,7 +1859,10 @@ mod tests {
         let proto_histogram = m.get_histogram();
         assert_eq!(proto_histogram.get_sample_count(), 3);
         assert!(proto_histogram.get_sample_sum() >= 1.5);
-        assert_eq!(proto_histogram.get_bucket().len(), DEFAULT_BUCKETS.len());
+        assert_eq!(
+            proto_histogram.get_bucket().len(),
+            DEFAULT_FLOAT_BUCKETS.len()
+        );
 
         let buckets = vec![1.0, 2.0, 3.0];
         let opts = HistogramOpts::new("test2", "test help").buckets(buckets.clone());
@@ -1307,14 +1928,14 @@ mod tests {
     #[test]
     fn test_buckets_invalidation() {
         let table = vec![
-            (vec![], true, DEFAULT_BUCKETS.len()),
+            (vec![], true, DEFAULT_FLOAT_BUCKETS.len()),
             (vec![-2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0], true, 7),
             (vec![-2.0, -1.0, -0.5, 10.0, 0.5, 1.0, 2.0], false, 7),
             (vec![-2.0, -1.0, -0.5, 0.0, 0.5, 1.0, INFINITY], true, 6),
         ];
 
         for (buckets, is_ok, length) in table {
-            let got = check_and_adjust_buckets(buckets);
+            let got = check_and_adjust_float_buckets(buckets);
             assert_eq!(got.is_ok(), is_ok);
             if is_ok {
                 assert_eq!(got.unwrap().len(), length);

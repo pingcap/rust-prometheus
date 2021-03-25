@@ -214,9 +214,11 @@ pub use self::encoder::TextEncoder;
 pub use self::encoder::{PROTOBUF_FORMAT, TEXT_FORMAT};
 pub use self::errors::{Error, Result};
 pub use self::gauge::{Gauge, GaugeVec, IntGauge, IntGaugeVec};
+#[deprecated(since = "0.12.0", note = "Please use DEFAULT_FLOAT_BUCKETS")]
 pub use self::histogram::DEFAULT_BUCKETS;
 pub use self::histogram::{exponential_buckets, linear_buckets};
 pub use self::histogram::{Histogram, HistogramOpts, HistogramTimer, HistogramVec};
+pub use self::histogram::{DEFAULT_FLOAT_BUCKETS, DEFAULT_INT_BUCKETS};
 pub use self::metrics::Opts;
 #[cfg(feature = "push")]
 pub use self::push::{
