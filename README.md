@@ -3,6 +3,7 @@
 [![Build Status](https://travis-ci.org/tikv/rust-prometheus.svg?branch=master)](https://travis-ci.org/pingcap/rust-prometheus)
 [![docs.rs](https://docs.rs/prometheus/badge.svg)](https://docs.rs/prometheus)
 [![crates.io](http://meritbadge.herokuapp.com/prometheus)](https://crates.io/crates/prometheus)
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Ftikv%2Frust-prometheus.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Ftikv%2Frust-prometheus?ref=badge_shield)
 
 This is the [Rust](https://www.rust-lang.org) client library for
 [Prometheus](http://prometheus.io). The main data structures and APIs are ported
@@ -42,3 +43,7 @@ See [static-metric](./static-metric) directory for details.
 - [kamalmarhubi](https://github.com/kamalmarhubi)
 - [lucab](https://github.com/lucab)
 - [koushiro](https://github.com/koushiro)
+
+
+## License
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Ftikv%2Frust-prometheus.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Ftikv%2Frust-prometheus?ref=badge_large)
