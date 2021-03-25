@@ -120,24 +120,27 @@ impl RegistryCore {
 
         for c in self.collectors_by_id.values() {
             let mfs = c.collect();
-            for mut mf in mfs {
+            for mf in mfs {
                 // Prune empty MetricFamilies.
-                if mf.get_metric().is_empty() {
+                if mf.metric.is_empty() {
                     continue;
                 }
 
-                let name = mf.get_name().to_owned();
+                let name = match &mf.name {
+                    Some(v) => v.to_owned(),
+                    None => "".to_owned(),
+                };
                 match mf_by_name.entry(name) {
                     BEntry::Vacant(entry) => {
                         entry.insert(mf);
                     }
                     BEntry::Occupied(mut entry) => {
                         let existent_mf = entry.get_mut();
-                        let existent_metrics = existent_mf.mut_metric();
+                        let existent_metrics = &mut existent_mf.metric;
 
                         // TODO: check type.
                         // TODO: check consistency.
-                        for metric in mf.take_metric().into_iter() {
+                        for metric in mf.metric.into_iter() {
                             existent_metrics.push(metric);
                         }
                     }
@@ -150,9 +153,9 @@ impl RegistryCore {
         // Now that MetricFamilies are all set, sort their Metrics
         // lexicographically by their label values.
         for mf in mf_by_name.values_mut() {
-            mf.mut_metric().sort_by(|m1, m2| {
-                let lps1 = m1.get_label();
-                let lps2 = m2.get_label();
+            mf.metric.sort_by(|m1, m2| {
+                let lps1 = &m1.label;
+                let lps2 = &m2.label;
 
                 if lps1.len() != lps2.len() {
                     // This should not happen. The metrics are
@@ -165,8 +168,8 @@ impl RegistryCore {
                 }
 
                 for (lp1, lp2) in lps1.iter().zip(lps2.iter()) {
-                    if lp1.get_value() != lp2.get_value() {
-                        return lp1.get_value().cmp(lp2.get_value());
+                    if lp1.value != lp2.value {
+                        return lp1.value.cmp(&lp2.value);
                     }
                 }
 
@@ -176,7 +179,7 @@ impl RegistryCore {
                 // here, even for inconsistent metrics. So sort equal metrics
                 // by their timestamp, with missing timestamps (implying "now")
                 // coming last.
-                m1.get_timestamp_ms().cmp(&m2.get_timestamp_ms())
+                m1.timestamp_ms.cmp(&m2.timestamp_ms)
             });
         }
 
@@ -186,26 +189,24 @@ impl RegistryCore {
             .map(|(_, mut m)| {
                 // Add registry namespace prefix, if any.
                 if let Some(ref namespace) = self.prefix {
-                    let prefixed = format!("{}_{}", namespace, m.get_name());
-                    m.set_name(prefixed);
+                    let prefixed = format!("{}_{}", namespace, m.name.unwrap_or_default());
+                    m.name = Some(prefixed);
                 }
 
                 // Add registry common labels, if any.
                 if let Some(ref hmap) = self.labels {
                     let pairs: Vec<proto::LabelPair> = hmap
                         .iter()
-                        .map(|(k, v)| {
-                            let mut label = proto::LabelPair::default();
-                            label.set_name(k.to_string());
-                            label.set_value(v.to_string());
-                            label
+                        .map(|(k, v)| proto::LabelPair {
+                            name: Some(k.to_string()),
+                            value: Some(v.to_string()),
                         })
                         .collect();
 
-                    for metric in m.mut_metric().iter_mut() {
-                        let mut labels: Vec<_> = metric.take_label().into();
+                    for metric in &mut m.metric.iter_mut() {
+                        let mut labels: Vec<_> = std::mem::replace(&mut metric.label, Vec::new());
                         labels.append(&mut pairs.clone());
-                        metric.set_label(labels.into());
+                        metric.label = labels;
                     }
                 }
                 m
@@ -416,9 +417,9 @@ mod tests {
 
         let mfs = r.gather();
         assert_eq!(mfs.len(), 3);
-        assert_eq!(mfs[0].get_name(), "test_2_counter");
-        assert_eq!(mfs[1].get_name(), "test_a_counter");
-        assert_eq!(mfs[2].get_name(), "test_b_counter");
+        assert_eq!(mfs[0].name, Some("test_2_counter".into()));
+        assert_eq!(mfs[1].name, Some("test_a_counter".into()));
+        assert_eq!(mfs[2].name, Some("test_b_counter".into()));
 
         let r = Registry::new();
         let opts = Opts::new("test", "test help")
@@ -470,12 +471,12 @@ mod tests {
 
         let mfs = r.gather();
         assert_eq!(mfs.len(), 1);
-        let ms = mfs[0].get_metric();
+        let ms = &mfs[0].metric;
         assert_eq!(ms.len(), 4);
-        assert_eq!(ms[0].get_counter().get_value() as u64, 2);
-        assert_eq!(ms[1].get_counter().get_value() as u64, 1);
-        assert_eq!(ms[2].get_counter().get_value() as u64, 3);
-        assert_eq!(ms[3].get_counter().get_value() as u64, 4);
+        assert_eq!(ms[0].counter.as_ref().unwrap().value.unwrap() as u64, 2);
+        assert_eq!(ms[1].counter.as_ref().unwrap().value.unwrap() as u64, 1);
+        assert_eq!(ms[2].counter.as_ref().unwrap().value.unwrap() as u64, 3);
+        assert_eq!(ms[3].counter.as_ref().unwrap().value.unwrap() as u64, 4);
     }
 
     #[test]
@@ -488,7 +489,7 @@ mod tests {
 
         let mfs = r.gather();
         assert_eq!(mfs.len(), 1);
-        assert_eq!(mfs[0].get_name(), "common_prefix_test_a_counter");
+        assert_eq!(mfs[0].name, Some("common_prefix_test_a_counter".into()));
     }
 
     #[test]
@@ -508,19 +509,19 @@ mod tests {
 
         let mfs = r.gather();
         assert_eq!(mfs.len(), 2);
-        assert_eq!(mfs[0].get_name(), "test_a_counter");
-        assert_eq!(mfs[1].get_name(), "test_vec");
+        assert_eq!(mfs[0].name, Some("test_a_counter".into()));
+        assert_eq!(mfs[1].name, Some("test_vec".into()));
 
         let mut needle = proto::LabelPair::default();
-        needle.set_name("tkey".to_string());
-        needle.set_value("tvalue".to_string());
-        let metrics = mfs[0].get_metric();
+        needle.name = Some("tkey".to_string());
+        needle.value = Some("tvalue".to_string());
+        let metrics = &mfs[0].metric;
         for m in metrics {
-            assert!(m.get_label().contains(&needle));
+            assert!(m.label.contains(&needle));
         }
-        let metrics = mfs[1].get_metric();
+        let metrics = &mfs[1].metric;
         for m in metrics {
-            assert!(m.get_label().contains(&needle));
+            assert!(m.label.contains(&needle));
         }
     }
 

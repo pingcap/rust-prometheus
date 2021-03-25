@@ -28,10 +28,10 @@ pub trait Encoder {
 }
 
 fn check_metric_family(mf: &MetricFamily) -> Result<()> {
-    if mf.get_metric().is_empty() {
+    if mf.metric.is_empty() {
         return Err(Error::Msg(format!("MetricFamily has no metrics: {:?}", mf)));
     }
-    if mf.get_name().is_empty() {
+    if mf.name.is_none() {
         return Err(Error::Msg(format!("MetricFamily has no name: {:?}", mf)));
     }
     Ok(())
@@ -67,7 +67,7 @@ mod tests {
         let mut mfs = cv.collect();
 
         // Empty name
-        (&mut mfs[0]).clear_name();
+        (&mut mfs[0]).name.take();
         check_metric_family(&mfs[0]).unwrap_err();
         pb_encoder.encode(&mfs, &mut writer).unwrap_err();
         assert_eq!(writer.len(), 0);
@@ -94,7 +94,7 @@ mod tests {
         let mut mfs = cv.collect();
 
         // Empty name
-        (&mut mfs[0]).clear_name();
+        (&mut mfs[0]).name.take();
         check_metric_family(&mfs[0]).unwrap_err();
         text_encoder.encode(&mfs, &mut writer).unwrap_err();
         assert_eq!(writer.len(), 0);

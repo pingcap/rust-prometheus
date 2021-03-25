@@ -152,7 +152,7 @@ impl<P: Atomic> GenericCounterVec<P> {
         let variable_names = label_names.iter().map(|s| (*s).to_owned()).collect();
         let opts = opts.variable_labels(variable_names);
         let metric_vec =
-            MetricVec::create(proto::MetricType::COUNTER, CounterVecBuilder::new(), opts)?;
+            MetricVec::create(proto::MetricType::Counter, CounterVecBuilder::new(), opts)?;
 
         Ok(metric_vec as Self)
     }
@@ -343,9 +343,9 @@ mod tests {
         assert_eq!(mfs.len(), 1);
 
         let mf = mfs.pop().unwrap();
-        let m = mf.get_metric().get(0).unwrap();
-        assert_eq!(m.get_label().len(), 2);
-        assert_eq!(m.get_counter().get_value() as u64, 43);
+        let m = mf.metric.get(0).unwrap();
+        assert_eq!(m.label.len(), 2);
+        assert_eq!(m.counter.as_ref().unwrap().value.unwrap_or(0.0) as u64, 43);
 
         counter.reset();
         assert_eq!(counter.get() as u64, 0);
@@ -363,9 +363,9 @@ mod tests {
         assert_eq!(mfs.len(), 1);
 
         let mf = mfs.pop().unwrap();
-        let m = mf.get_metric().get(0).unwrap();
-        assert_eq!(m.get_label().len(), 0);
-        assert_eq!(m.get_counter().get_value() as u64, 12);
+        let m = mf.metric.get(0).unwrap();
+        assert_eq!(m.label.len(), 0);
+        assert_eq!(m.counter.as_ref().unwrap().value.unwrap_or(0.0) as u64, 12);
 
         counter.reset();
         assert_eq!(counter.get() as u64, 0);

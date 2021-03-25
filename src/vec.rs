@@ -35,18 +35,17 @@ pub(crate) struct MetricVecCore<T: MetricVecBuilder> {
 
 impl<T: MetricVecBuilder> MetricVecCore<T> {
     pub fn collect(&self) -> MetricFamily {
-        let mut m = MetricFamily::default();
-        m.set_name(self.desc.fq_name.clone());
-        m.set_help(self.desc.help.clone());
-        m.set_field_type(self.metric_type);
-
         let children = self.children.read();
         let mut metrics = Vec::with_capacity(children.len());
         for child in children.values() {
             metrics.push(child.metric());
         }
-        m.set_metric(from_vec!(metrics));
-        m
+        MetricFamily {
+            name: Some(self.desc.fq_name.clone()),
+            help: Some(self.desc.help.clone()),
+            r#type: Some(self.metric_type.into()),
+            metric: metrics,
+        }
     }
 
     pub fn get_metric_with_label_values(&self, vals: &[&str]) -> Result<T::M> {
@@ -425,10 +424,13 @@ mod tests {
         labels.insert("c", "a");
         let c = vec.get_metric_with(&labels).unwrap();
         let m = c.metric();
-        let label_pairs = m.get_label();
+        let label_pairs = m.label;
         assert_eq!(label_pairs.len(), labels.len());
         for lp in label_pairs.iter() {
-            assert_eq!(lp.get_value(), labels[lp.get_name()]);
+            assert_eq!(
+                lp.value.as_ref().unwrap(),
+                labels[lp.name.as_ref().unwrap().as_str()]
+            );
         }
     }
 }

@@ -106,8 +106,10 @@ additional functionality.
 
 This library supports four features:
 
-* `gen`: To generate protobuf client with the latest protobuf version instead of
-  using the pre-generated client.
+* `protobuf`: Enable [Protocol Buffers](https://developers.google.com/protocol-buffers/) (aka Protobuf)  based exposition format. (Enabled by default)
+
+> Notice: Since version 2.0, Prometheus no longer supports the Protobuf-based format. You can read about the reasoning behind this change in [this document](https://github.com/OpenObservability/OpenMetrics/blob/master/legacy/markdown/protobuf_vs_text.md).
+
 * `nightly`: Enable nightly only features.
 * `process`: For collecting process info.
 * `push`: Enable push support.
@@ -125,27 +127,14 @@ This library supports four features:
 /// Protocol buffers format of metrics.
 #[cfg(feature = "protobuf")]
 #[allow(warnings)]
-#[rustfmt::skip]
-#[path = "../proto/proto_model.rs"]
-pub mod proto;
-
-#[cfg(feature = "protobuf")]
-macro_rules! from_vec {
-    ($e: expr) => {
-        ::protobuf::RepeatedField::from_vec($e)
-    };
+#[allow(missing_docs)]
+pub mod proto {
+    include!(concat!(env!("OUT_DIR"), "/io.prometheus.client.rs"));
 }
 
 #[cfg(not(feature = "protobuf"))]
 #[path = "plain_model.rs"]
 pub mod proto;
-
-#[cfg(not(feature = "protobuf"))]
-macro_rules! from_vec {
-    ($e: expr) => {
-        $e
-    };
-}
 
 #[macro_use]
 mod macros;
