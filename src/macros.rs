@@ -8,15 +8,17 @@
 /// # use std::collections::HashMap;
 /// # use prometheus::labels;
 /// # fn main() {
+/// let path = String::from("/metrics");
+/// let status = 200;
 /// let labels = labels!{
-///     "test" => "hello",
-///     "foo" => "bar",
+///     "path" => path,
+///     "status" => status,
 /// };
 /// assert_eq!(labels.len(), 2);
-/// assert!(labels.get("test").is_some());
-/// assert_eq!(*(labels.get("test").unwrap()), "hello");
+/// assert_eq!(*(labels.get("path").unwrap()), "/metrics");
+/// assert_eq!(*(labels.get("status").unwrap()), "200");
 ///
-/// let labels: HashMap<&str, &str> = labels!{};
+/// let labels = labels!{};
 /// assert!(labels.is_empty());
 /// # }
 /// ```
@@ -26,9 +28,9 @@ macro_rules! labels {
         {
             use std::collections::HashMap;
 
-            let mut lbs = HashMap::new();
+            let mut lbs = HashMap::<String, String>::new();
             $(
-                lbs.insert($KEY, $VALUE);
+                lbs.insert($KEY.to_string(), $VALUE.to_string());
             )*
 
             lbs
@@ -55,10 +57,11 @@ macro_rules! labels {
 /// assert!(opts.const_labels.get("foo").is_some());
 /// assert_eq!(opts.const_labels.get("foo").unwrap(), "bar");
 ///
-/// let opts = opts!(name,
-///                  help,
-///                  labels!{"test" => "hello", "foo" => "bar",},
-///                  labels!{"ans" => "42",});
+/// let opts = opts!(
+///     name,
+///     help,
+///     labels!{"test" => "hello", "foo" => "bar"},
+///     labels!{"ans" => 42});
 /// assert_eq!(opts.const_labels.len(), 3);
 /// assert!(opts.const_labels.get("ans").is_some());
 /// assert_eq!(opts.const_labels.get("ans").unwrap(), "42");
@@ -74,7 +77,7 @@ macro_rules! opts {
             let lbs = HashMap::<String, String>::new();
             $(
                 let mut lbs = lbs;
-                lbs.extend($CONST_LABELS.iter().map(|(k, v)| ((*k).into(), (*v).into())));
+                lbs.extend($CONST_LABELS.into_iter().map(|(k, v)| (k.to_string(), v.to_string())));
             )*
 
             opts.const_labels(lbs)
@@ -102,15 +105,16 @@ macro_rules! opts {
 /// assert_eq!(opts.common_opts.help, help);
 /// assert_eq!(opts.buckets.len(), 4);
 ///
-/// let opts = histogram_opts!(name,
-///                            help,
-///                            vec![1.0, 2.0],
-///                            labels!{"key".to_string() => "value".to_string(),});
+/// let opts = histogram_opts!(
+///     name,
+///     help,
+///     vec![1.0, 2.0],
+///     labels!{"key" => "value", "status" => 200});
 /// assert_eq!(opts.common_opts.name, name);
 /// assert_eq!(opts.common_opts.help, help);
 /// assert_eq!(opts.buckets.len(), 2);
-/// assert!(opts.common_opts.const_labels.get("key").is_some());
 /// assert_eq!(opts.common_opts.const_labels.get("key").unwrap(), "value");
+/// assert_eq!(opts.common_opts.const_labels.get("status").unwrap(), "200");
 /// # }
 /// ```
 #[macro_export(local_inner_macros)]
