@@ -151,12 +151,20 @@ impl<P: Atomic> GenericGaugeVec<P> {
     /// Create a new [`GenericGaugeVec`] based on the provided
     /// [`Opts`] and partitioned by the given label names. At least one label name must
     /// be provided.
-    pub fn new(opts: Opts, label_names: &[&str]) -> Result<Self> {
-        let variable_names = label_names.iter().map(|s| (*s).to_owned()).collect();
-        let opts = opts.variable_labels(variable_names);
+    pub fn new_from_vec(opts: Opts, label_names: Vec<String>) -> Result<Self> {
+        let opts = opts.variable_labels(label_names);
         let metric_vec = MetricVec::create(proto::MetricType::GAUGE, GaugeVecBuilder::new(), opts)?;
 
         Ok(metric_vec as Self)
+    }
+
+    /// Create a new [`GenericGaugeVec`] based on the provided
+    /// [`Opts`] and partitioned by the given label names. At least one label name must
+    /// be provided.
+    pub fn new(opts: Opts, label_names: &[&str]) -> Result<Self> {
+        let variable_names = label_names.iter().map(|s| (*s).to_owned()).collect();
+        
+        Self::new_from_vec(opts, variable_names)
     }
 }
 
