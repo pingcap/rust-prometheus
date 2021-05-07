@@ -263,6 +263,67 @@ impl Registry {
         Ok(reg)
     }
 
+    /// `prefix` returns a copy of the prefix for the registry, if any.
+    pub fn prefix(&self) -> Option<String> {
+        self.r.read().prefix.clone()
+    }
+
+    /// `set_prefix` sets the prefix for the registry, and returns the previous
+    /// prefix, if any. If `prefix` is empty, the function returns an error.
+    pub fn set_prefix(&self, prefix: &str) -> Result<Option<String>> {
+        if prefix.is_empty() {
+            return Err(Error::Msg("empty prefix namespace".to_string()));
+        }
+
+        let mut core = self.r.write();
+        let result = core.prefix.take();
+        core.prefix = Some(prefix.to_string());
+        Ok(result)
+    }
+
+    /// `clear_prefix` removes the prefix from the registry and returns it to
+    /// the caller, if a prefix was set.
+    pub fn clear_prefix(&self) -> Option<String> {
+        let mut core = self.r.write();
+        core.prefix.take()
+    }
+
+    /// `labels` returns a copy of the common labels for the registry, if any.
+    pub fn labels(&self) -> Option<HashMap<String, String>> {
+        self.r.read().labels.clone()
+    }
+
+    /// `insert_label` adds or updates a label in the set of common labels for
+    /// the registry, and returns the previous value of that label, if any.
+    /// If either `key` or `value` are empty, the function returns an error.
+    pub fn insert_label(&self, key: &str, value: &str) -> Result<Option<String>> {
+        if key.is_empty() {
+            return Err(Error::Msg("empty label key".to_string()));
+        }
+        if value.is_empty() {
+            return Err(Error::Msg("empty label value".to_string()));
+        }
+
+        let mut core = self.r.write();
+
+        if core.labels.is_none() {
+            core.labels = Some(HashMap::default());
+        }
+
+        Ok(core
+            .labels
+            .as_mut()
+            .unwrap()
+            .insert(key.to_string(), value.to_string()))
+    }
+
+    /// `clear_labels` removes all common labels from the registry, if any, and
+    /// returns them to the caller.
+    pub fn clear_labels(&self) -> Option<HashMap<String, String>> {
+        let mut core = self.r.write();
+        core.labels.take()
+    }
+
     /// `register` registers a new [`Collector`] to be included in metrics
     /// collection. It returns an error if the descriptors provided by the
     /// [`Collector`] are invalid or if they — in combination with descriptors of
