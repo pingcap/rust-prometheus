@@ -20,9 +20,9 @@ pub use libc::pid_t;
 /// Six metrics per ProcessCollector.
 const METRICS_NUMBER: usize = 6;
 
-/// A collector which exports the current state of
-/// process metrics including cpu, memory and file descriptor usage as well as
-/// the process start time for the given process id.
+/// A collector which exports the current state of process metrics including
+/// CPU, memory and file descriptor usage, thread count, as well as the process
+/// start time for the given process id.
 #[derive(Debug)]
 pub struct ProcessCollector {
     pid: pid_t,
@@ -33,6 +33,7 @@ pub struct ProcessCollector {
     vsize: Gauge,
     rss: Gauge,
     start_time: Gauge,
+    threads: Gauge,
 }
 
 impl ProcessCollector {
@@ -100,6 +101,12 @@ impl ProcessCollector {
         .unwrap();
         descs.extend(start_time.desc().into_iter().cloned());
 
+        let threads = Gauge::with_opts(
+            Opts::new("process_threads", "Number of OS threads.").namespace(namespace.clone()),
+        )
+        .unwrap();
+        descs.extend(threads.desc().into_iter().cloned());
+
         ProcessCollector {
             pid,
             descs,
@@ -109,6 +116,7 @@ impl ProcessCollector {
             vsize,
             rss,
             start_time,
+            threads,
         }
     }
 
@@ -165,6 +173,9 @@ impl Collector for ProcessCollector {
 
             cpu_total.collect()
         };
+
+        // threads
+        self.threads.set(p.stat.num_threads as f64);
 
         // collect MetricFamilys.
         let mut mfs = Vec::with_capacity(METRICS_NUMBER);
