@@ -17,8 +17,8 @@ use crate::proto;
 /// The `pid_t` data type represents process IDs.
 pub use libc::pid_t;
 
-/// Six metrics per ProcessCollector.
-const METRICS_NUMBER: usize = 6;
+/// Seven metrics per ProcessCollector.
+const METRICS_NUMBER: usize = 7;
 
 /// A collector which exports the current state of process metrics including
 /// CPU, memory and file descriptor usage, thread count, as well as the process
@@ -185,6 +185,7 @@ impl Collector for ProcessCollector {
         mfs.extend(self.vsize.collect());
         mfs.extend(self.rss.collect());
         mfs.extend(self.start_time.collect());
+        mfs.extend(self.threads.collect());
         mfs
     }
 }
@@ -219,7 +220,7 @@ mod tests {
     fn test_process_collector() {
         let pc = ProcessCollector::for_self();
         {
-            // Six metrics per process collector.
+            // Seven metrics per process collector.
             let descs = pc.desc();
             assert_eq!(descs.len(), super::METRICS_NUMBER);
             let mfs = pc.collect();
