@@ -9,6 +9,7 @@ use std::sync::Arc;
 use crate::atomic64::{Atomic, AtomicF64, AtomicU64, Number};
 use crate::desc::Desc;
 use crate::errors::Result;
+use crate::exemplars::Exemplar;
 use crate::metrics::{Collector, LocalMetric, Metric, Opts};
 use crate::proto;
 use crate::value::{Value, ValueType};
@@ -18,6 +19,7 @@ use crate::vec::{MetricVec, MetricVecBuilder};
 #[derive(Debug)]
 pub struct GenericCounter<P: Atomic> {
     v: Arc<Value<P>>,
+    ex: Arc<Option<Exemplar>>,
 }
 
 /// A [`Metric`] represents a single numerical value that only ever goes up.
@@ -31,6 +33,7 @@ impl<P: Atomic> Clone for GenericCounter<P> {
     fn clone(&self) -> Self {
         Self {
             v: Arc::clone(&self.v),
+            ex: Arc::clone(&self.ex),
         }
     }
 }
@@ -49,7 +52,10 @@ impl<P: Atomic> GenericCounter<P> {
 
     fn with_opts_and_label_values(opts: &Opts, label_values: &[&str]) -> Result<Self> {
         let v = Value::new(opts, ValueType::Counter, P::T::from_i64(0), label_values)?;
-        Ok(Self { v: Arc::new(v) })
+        Ok(Self {
+            v: Arc::new(v),
+            ex: Arc::new(None),
+        })
     }
 
     /// Increase the given value to the counter.
@@ -73,6 +79,12 @@ impl<P: Atomic> GenericCounter<P> {
     #[inline]
     pub fn get(&self) -> P::T {
         self.v.get()
+    }
+
+    /// Set an [`Exemplar`] for the counter.
+    #[inline]
+    pub fn set_exemplar(&mut self, ex: Exemplar) {
+        *Arc::get_mut(&mut self.ex).unwrap() = Some(ex);
     }
 
     /// Restart the counter, resetting its value back to 0.

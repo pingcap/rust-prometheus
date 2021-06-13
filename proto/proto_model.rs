@@ -410,6 +410,7 @@ impl ::protobuf::reflect::ProtobufValue for Gauge {
 pub struct Counter {
     // message fields
     value: ::std::option::Option<f64>,
+    exemplar: ::std::option::Option<Exemplar>,
     // special fields
     pub unknown_fields: ::protobuf::UnknownFields,
     pub cached_size: ::protobuf::CachedSize,
@@ -437,6 +438,25 @@ impl Counter {
 
     pub fn get_value(&self) -> f64 {
         self.value.unwrap_or(0.)
+    }
+
+    // optional bytes exemplar = 2;
+
+    pub fn clear_exemplar(mut self) {
+        self.exemplar = ::std::option::Option::None;
+    }
+
+    pub fn has_exemplar(&self) -> bool {
+        self.exemplar.is_some()
+    }
+
+    // Param is passed by value, moved
+    pub fn set_exemplar(&mut self, v: Exemplar) {
+        self.exemplar = ::std::option::Option::Some(v);
+    }
+
+    pub fn get_exemplar(&self) -> Option<&Exemplar> {
+        self.exemplar.as_ref()
     }
 }
 
@@ -1173,6 +1193,89 @@ impl ::protobuf::reflect::ProtobufValue for Untyped {
     }
 }
 
+#[derive(PartialEq,Clone,Default, Debug)]
+pub struct Exemplar {
+    value: ::std::option::Option<f64>,
+    timestamp: ::std::option::Option<f64>,
+    label: ::protobuf::RepeatedField<LabelPair>,
+}
+use crate::exemplars;
+impl From<exemplars::Exemplar> for Exemplar {
+    fn from(e: exemplars::Exemplar) -> Exemplar {
+        Exemplar {
+            value: Some(e.value),
+            timestamp: Some(e.timestamp_epoch),
+            label: e.labels.into()
+        }
+    }
+}
+
+impl Exemplar {
+    // Value
+
+    pub fn clear_value(&mut self) {
+        self.value = ::std::option::Option::None;
+    }
+
+    pub fn has_value(&self) -> bool {
+        self.value.is_some()
+    }
+
+    // Param is passed by value, moved
+    pub fn set_value(&mut self, v: f64) {
+        self.value = ::std::option::Option::Some(v);
+    }
+
+    pub fn get_value(&self) -> f64 {
+        self.value.unwrap_or(0.)
+    }
+
+    // Timestamp
+
+    pub fn clear_timestamp(&mut self) {
+        self.timestamp = ::std::option::Option::None;
+    }
+
+    pub fn has_timestamp_ms(&self) -> bool {
+        self.timestamp.is_some()
+    }
+
+    // Param is passed by value, moved
+    pub fn set_timestamp(&mut self, v: f64) {
+        self.timestamp = ::std::option::Option::Some(v);
+    }
+
+    pub fn get_timestamp(&self) -> f64 {
+        self.timestamp.unwrap_or(0.0)
+    }
+
+    // Labels
+
+    pub fn clear_label(&mut self) {
+        self.label.clear();
+    }
+
+    // Param is passed by value, moved
+    pub fn set_label(&mut self, v: ::protobuf::RepeatedField<LabelPair>) {
+        self.label = v;
+    }
+
+    // Mutable pointer to the field.
+    pub fn mut_label(&mut self) -> &mut ::protobuf::RepeatedField<LabelPair> {
+        &mut self.label
+    }
+
+    // Take field
+    pub fn take_label(&mut self) -> ::protobuf::RepeatedField<LabelPair> {
+        ::std::mem::replace(&mut self.label, ::protobuf::RepeatedField::new())
+    }
+
+    pub fn get_label(&self) -> &[LabelPair] {
+        &self.label
+    }
+}
+
+
 #[derive(PartialEq,Clone,Default)]
 pub struct Histogram {
     // message fields
@@ -1429,6 +1532,7 @@ pub struct Bucket {
     // special fields
     pub unknown_fields: ::protobuf::UnknownFields,
     pub cached_size: ::protobuf::CachedSize,
+    exemplar: ::std::option::Option<Exemplar>,
 }
 
 impl Bucket {
@@ -1472,6 +1576,25 @@ impl Bucket {
 
     pub fn get_upper_bound(&self) -> f64 {
         self.upper_bound.unwrap_or(0.)
+    }
+
+    // optional bytes exemplar = 3;
+
+    pub fn clear_exemplar(&mut self) {
+        self.exemplar = ::std::option::Option::None;
+    }
+
+    pub fn has_exemplar(&self) -> bool {
+        self.exemplar.is_some()
+    }
+
+    // Param is passed by value, moved
+    pub fn set_exemplar(&mut self, v: Exemplar) {
+        self.exemplar = ::std::option::Option::Some(v);
+    }
+
+    pub fn get_exemplar(&self) -> Option<&Exemplar> {
+        self.exemplar.as_ref()
     }
 }
 

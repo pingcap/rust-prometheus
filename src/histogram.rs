@@ -13,6 +13,7 @@ use std::time::{Duration, Instant as StdInstant};
 use crate::atomic64::{Atomic, AtomicF64, AtomicU64};
 use crate::desc::{Desc, Describer};
 use crate::errors::{Error, Result};
+use crate::exemplars::Exemplar;
 use crate::metrics::{Collector, LocalMetric, Metric, Opts};
 use crate::proto;
 use crate::value::make_label_pairs;
@@ -323,6 +324,9 @@ pub struct HistogramCore {
     /// and which one the cold at any given point in time.
     shards: [Shard; 2],
 
+    /// exemplars (synchronised on write when used)
+    exemplars: Vec<Arc<Mutex<Option<Exemplar>>>>,
+
     upper_bounds: Vec<f64>,
 }
 
@@ -341,6 +345,11 @@ impl HistogramCore {
 
         let buckets = check_and_adjust_buckets(opts.buckets.clone())?;
 
+        let mut exemplars = vec![];
+        for _ in 0..buckets.len() {
+            exemplars.push(Arc::new(Mutex::new(None)));
+        }
+
         Ok(HistogramCore {
             desc,
             label_pairs,
@@ -351,7 +360,17 @@ impl HistogramCore {
             shards: [Shard::new(buckets.len()), Shard::new(buckets.len())],
 
             upper_bounds: buckets,
+            exemplars,
         })
+    }
+    /// Record a given observation along with an exemplar
+    pub fn observe_with_exemplar(&self, v: f64, ex: Exemplar) {
+        self.observe_with_optional_exemplar(v, Some(ex));
+    }
+
+    /// Record a given observation (f64) in the histogram.
+    pub fn observe(&self, v: f64) {
+        self.observe_with_optional_exemplar(v, None);
     }
 
     /// Record a given observation (f64) in the histogram.
@@ -360,7 +379,7 @@ impl HistogramCore {
     // is the current hot shard. Subsequently on the hot shard update the
     // corresponding bucket count, adjust the shard's sum and finally increase
     // the shard's count.
-    pub fn observe(&self, v: f64) {
+    fn observe_with_optional_exemplar(&self, v: f64, ex: Option<Exemplar>) {
         // The collect code path uses `self.shard_and_count` and
         // `self.shards[x].count` to ensure not to collect data from a shard
         // while observe calls are still operating on it.
@@ -379,6 +398,7 @@ impl HistogramCore {
             .filter(|&(_, f)| v <= *f);
         if let Some((i, _)) = iter.next() {
             shard.buckets[i].inc_by(1);
+            *self.exemplars[i].lock().unwrap() = ex;
         }
 
         shard.sum.inc_by(v);
@@ -446,11 +466,17 @@ impl HistogramCore {
             // interfere with previous or upcoming collect calls.
             let cold_bucket_count = cold_shard.buckets[i].swap(0, Ordering::AcqRel);
             hot_shard.buckets[i].inc_by(cold_bucket_count);
+            let exemplar = self.exemplars[i].lock().unwrap().clone();
 
             cumulative_count += cold_bucket_count;
             let mut b = proto::Bucket::default();
             b.set_cumulative_count(cumulative_count);
             b.set_upper_bound(*upper_bound);
+            if let Some(ex) = exemplar {
+                b.set_exemplar(ex.clone().into());
+            } else {
+                b.clear_exemplar();
+            }
             buckets.push(b);
         }
         h.set_bucket(from_vec!(buckets));
@@ -692,6 +718,11 @@ impl Histogram {
     /// Add a single observation to the [`Histogram`].
     pub fn observe(&self, v: f64) {
         self.core.observe(v)
+    }
+
+    /// Add a single observation to the [`Histogram`] with an ['Exemplar']
+    pub fn observe_with_exemplar(&self, v: f64, ex: Exemplar) {
+        self.core.observe_with_exemplar(v, ex)
     }
 
     /// Return a [`HistogramTimer`] to track a duration.
