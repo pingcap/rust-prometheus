@@ -161,6 +161,43 @@ macro_rules! register_counter {
     }};
 }
 
+/// Create a [`Counter`] and registers to a custom registry.
+///
+/// # Examples
+///
+/// ```
+/// # #[macro_use] extern crate prometheus;
+/// # use prometheus::Registry;
+/// # use std::collections::HashMap;
+/// # fn main() {
+/// let mut labels = HashMap::new();
+/// labels.insert("mykey".to_string(), "myvalue".to_string());
+/// let custom_registry = Registry::new_custom(Some("myprefix".to_string()), Some(labels)).unwrap();
+/// let opts = opts!("test_macro_counter_1", "help");
+/// let res1 = register_counter_with_registry!(opts, custom_registry);
+/// assert!(res1.is_ok());
+///
+/// let res2 = register_counter_with_registry!("test_macro_counter_2", "help", custom_registry);
+/// assert!(res2.is_ok());
+/// # }
+/// ```
+#[macro_export(local_inner_macros)]
+macro_rules! register_counter_with_registry {
+
+    (@of_type $TYPE: ident, $OPTS:expr, $REGISTRY:expr) => {{
+        let counter = $crate::$TYPE::with_opts($OPTS).unwrap();
+        $REGISTRY.register(Box::new(counter.clone())).map(|_| counter)
+    }};
+
+    ($OPTS:expr, $REGISTRY:expr) => {{
+        register_counter_with_registry!(@of_type Counter, $OPTS, $REGISTRY)
+    }};
+
+    ($NAME:expr, $HELP:expr, $REGISTRY:expr) => {{
+        register_counter_with_registry!(opts!($NAME, $HELP), $REGISTRY)
+    }};
+}
+
 /// Create an [`IntCounter`] and registers to default registry.
 ///
 /// View docs of `register_counter` for examples.
@@ -175,12 +212,33 @@ macro_rules! register_int_counter {
     }};
 }
 
+/// Create an [`IntCounter`] and registers to a custom registry.
+///
+/// View docs of `register_counter_with_registry` for examples.
+#[macro_export(local_inner_macros)]
+macro_rules! register_int_counter_with_registry {
+    ($OPTS:expr, $REGISTRY:expr) => {{
+        register_counter_with_registry!(@of_type IntCounter, $OPTS, $REGISTRY)
+    }};
+
+    ($NAME:expr, $HELP:expr, $REGISTRY:expr) => {{
+        register_int_counter_with_registry!(opts!($NAME, $HELP), $REGISTRY)
+    }};
+}
+
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __register_counter_vec {
     ($TYPE:ident, $OPTS:expr, $LABELS_NAMES:expr) => {{
         let counter_vec = $crate::$TYPE::new($OPTS, $LABELS_NAMES).unwrap();
         $crate::register(Box::new(counter_vec.clone())).map(|_| counter_vec)
+    }};
+
+    ($TYPE:ident, $OPTS:expr, $LABELS_NAMES:expr, $REGISTRY:expr) => {{
+        let counter_vec = $crate::$TYPE::new($OPTS, $LABELS_NAMES).unwrap();
+        $REGISTRY
+            .register(Box::new(counter_vec.clone()))
+            .map(|_| counter_vec)
     }};
 }
 
@@ -210,6 +268,38 @@ macro_rules! register_counter_vec {
     }};
 }
 
+/// Create a [`CounterVec`] and registers to a custom registry.
+///
+/// # Examples
+///
+/// ```
+/// # #[macro_use] extern crate prometheus;
+/// # use prometheus::Registry;
+/// # use std::collections::HashMap;
+/// # fn main() {
+/// let mut labels = HashMap::new();
+/// labels.insert("mykey".to_string(), "myvalue".to_string());
+/// let custom_registry = Registry::new_custom(Some("myprefix".to_string()), Some(labels)).unwrap();
+///
+/// let opts = opts!("test_macro_counter_vec_1", "help");
+/// let counter_vec = register_counter_vec_with_registry!(opts, &["a", "b"], custom_registry);
+/// assert!(counter_vec.is_ok());
+///
+/// let counter_vec = register_counter_vec_with_registry!("test_macro_counter_vec_2", "help", &["a", "b"], custom_registry);
+/// assert!(counter_vec.is_ok());
+/// # }
+/// ```
+#[macro_export(local_inner_macros)]
+macro_rules! register_counter_vec_with_registry {
+    ($OPTS:expr, $LABELS_NAMES:expr, $REGISTRY:expr) => {{
+        __register_counter_vec!(CounterVec, $OPTS, $LABELS_NAMES, $REGISTRY)
+    }};
+
+    ($NAME:expr, $HELP:expr, $LABELS_NAMES:expr, $REGISTRY:expr) => {{
+        register_counter_vec_with_registry!(opts!($NAME, $HELP), $LABELS_NAMES, $REGISTRY)
+    }};
+}
+
 /// Create an [`IntCounterVec`] and registers to default registry.
 ///
 /// View docs of `register_counter_vec` for examples.
@@ -224,12 +314,31 @@ macro_rules! register_int_counter_vec {
     }};
 }
 
+/// Create an [`IntCounterVec`] and registers to a custom registry.
+///
+/// View docs of `register_counter_vec_with_registry` for examples.
+#[macro_export(local_inner_macros)]
+macro_rules! register_int_counter_vec_with_registry {
+    ($OPTS:expr, $LABELS_NAMES:expr, $REGISTRY:expr) => {{
+        __register_counter_vec!(IntCounterVec, $OPTS, $LABELS_NAMES, $REGISTRY)
+    }};
+
+    ($NAME:expr, $HELP:expr, $LABELS_NAMES:expr, $REGISTRY:expr) => {{
+        register_int_counter_vec_with_registry!(opts!($NAME, $HELP), $LABELS_NAMES, $REGISTRY)
+    }};
+}
+
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __register_gauge {
     ($TYPE:ident, $OPTS:expr) => {{
         let gauge = $crate::$TYPE::with_opts($OPTS).unwrap();
         $crate::register(Box::new(gauge.clone())).map(|_| gauge)
+    }};
+
+    ($TYPE:ident, $OPTS:expr, $REGISTRY:expr) => {{
+        let gauge = $crate::$TYPE::with_opts($OPTS).unwrap();
+        $REGISTRY.register(Box::new(gauge.clone())).map(|_| gauge)
     }};
 }
 
@@ -259,6 +368,38 @@ macro_rules! register_gauge {
     }};
 }
 
+/// Create a [`Gauge`] and registers to a custom registry.
+///
+/// # Examples
+///
+/// ```
+/// # #[macro_use] extern crate prometheus;
+/// # use prometheus::Registry;
+/// # use std::collections::HashMap;
+/// # fn main() {
+/// let mut labels = HashMap::new();
+/// labels.insert("mykey".to_string(), "myvalue".to_string());
+/// let custom_registry = Registry::new_custom(Some("myprefix".to_string()), Some(labels)).unwrap();
+///
+/// let opts = opts!("test_macro_gauge", "help");
+/// let res1 = register_gauge_with_registry!(opts, custom_registry);
+/// assert!(res1.is_ok());
+///
+/// let res2 = register_gauge_with_registry!("test_macro_gauge_2", "help", custom_registry);
+/// assert!(res2.is_ok());
+/// # }
+/// ```
+#[macro_export(local_inner_macros)]
+macro_rules! register_gauge_with_registry {
+    ($OPTS:expr, $REGISTRY:expr) => {{
+        __register_gauge!(Gauge, $OPTS, $REGISTRY)
+    }};
+
+    ($NAME:expr, $HELP:expr, $REGISTRY:expr) => {{
+        register_gauge_with_registry!(opts!($NAME, $HELP), $REGISTRY)
+    }};
+}
+
 /// Create an [`IntGauge`] and registers to default registry.
 ///
 /// View docs of `register_gauge` for examples.
@@ -273,12 +414,33 @@ macro_rules! register_int_gauge {
     }};
 }
 
+/// Create an [`IntGauge`] and registers to a custom registry.
+///
+/// View docs of `register_gauge_with_registry` for examples.
+#[macro_export(local_inner_macros)]
+macro_rules! register_int_gauge_with_registry {
+    ($OPTS:expr, $REGISTRY:expr) => {{
+        __register_gauge!(IntGauge, $OPTS, $REGISTRY)
+    }};
+
+    ($NAME:expr, $HELP:expr, $REGISTRY:expr) => {{
+        register_int_gauge_with_registry!(opts!($NAME, $HELP), $REGISTRY)
+    }};
+}
+
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __register_gauge_vec {
     ($TYPE:ident, $OPTS:expr, $LABELS_NAMES:expr) => {{
         let gauge_vec = $crate::$TYPE::new($OPTS, $LABELS_NAMES).unwrap();
         $crate::register(Box::new(gauge_vec.clone())).map(|_| gauge_vec)
+    }};
+
+    ($TYPE:ident, $OPTS:expr, $LABELS_NAMES:expr, $REGISTRY:expr) => {{
+        let gauge_vec = $crate::$TYPE::new($OPTS, $LABELS_NAMES).unwrap();
+        $REGISTRY
+            .register(Box::new(gauge_vec.clone()))
+            .map(|_| gauge_vec)
     }};
 }
 
@@ -308,6 +470,38 @@ macro_rules! register_gauge_vec {
     }};
 }
 
+/// Create a [`GaugeVec`] and registers to a custom registry.
+///
+/// # Examples
+///
+/// ```
+/// # #[macro_use] extern crate prometheus;
+/// # use prometheus::Registry;
+/// # use std::collections::HashMap;
+/// # fn main() {
+/// let mut labels = HashMap::new();
+/// labels.insert("mykey".to_string(), "myvalue".to_string());
+/// let custom_registry = Registry::new_custom(Some("myprefix".to_string()), Some(labels)).unwrap();
+///
+/// let opts = opts!("test_macro_gauge_vec_1", "help");
+/// let gauge_vec = register_gauge_vec_with_registry!(opts, &["a", "b"], custom_registry);
+/// assert!(gauge_vec.is_ok());
+///
+/// let gauge_vec = register_gauge_vec_with_registry!("test_macro_gauge_vec_2", "help", &["a", "b"], custom_registry);
+/// assert!(gauge_vec.is_ok());
+/// # }
+/// ```
+#[macro_export(local_inner_macros)]
+macro_rules! register_gauge_vec_with_registry {
+    ($OPTS:expr, $LABELS_NAMES:expr, $REGISTRY:expr) => {{
+        __register_gauge_vec!(GaugeVec, $OPTS, $LABELS_NAMES, $REGISTRY)
+    }};
+
+    ($NAME:expr, $HELP:expr, $LABELS_NAMES:expr, $REGISTRY:expr) => {{
+        register_gauge_vec_with_registry!(opts!($NAME, $HELP), $LABELS_NAMES, $REGISTRY)
+    }};
+}
+
 /// Create an [`IntGaugeVec`] and registers to default registry.
 ///
 /// View docs of `register_gauge_vec` for examples.
@@ -319,6 +513,20 @@ macro_rules! register_int_gauge_vec {
 
     ($NAME:expr, $HELP:expr, $LABELS_NAMES:expr) => {{
         register_int_gauge_vec!(opts!($NAME, $HELP), $LABELS_NAMES)
+    }};
+}
+
+/// Create an [`IntGaugeVec`] and registers to a custom registry.
+///
+/// View docs of `register_gauge_vec_with_registry` for examples.
+#[macro_export(local_inner_macros)]
+macro_rules! register_int_gauge_vec_with_registry {
+    ($OPTS:expr, $LABELS_NAMES:expr, $REGISTRY:expr) => {{
+        __register_gauge_vec!(IntGaugeVec, $OPTS, $LABELS_NAMES, $REGISTRY)
+    }};
+
+    ($NAME:expr, $HELP:expr, $LABELS_NAMES:expr, $REGISTRY:expr) => {{
+        register_int_gauge_vec_with_registry!(opts!($NAME, $HELP), $LABELS_NAMES, $REGISTRY)
     }};
 }
 
@@ -358,6 +566,50 @@ macro_rules! register_histogram {
     }};
 }
 
+/// Create a [`Histogram`] and registers to a custom registry.
+///
+/// # Examples
+///
+/// ```
+/// # #[macro_use] extern crate prometheus;
+/// # use prometheus::Registry;
+/// # use std::collections::HashMap;
+/// # fn main() {
+/// let mut labels = HashMap::new();
+/// labels.insert("mykey".to_string(), "myvalue".to_string());
+/// let custom_registry = Registry::new_custom(Some("myprefix".to_string()), Some(labels)).unwrap();
+///
+/// let opts = histogram_opts!("test_macro_histogram", "help");
+/// let res1 = register_histogram_with_registry!(opts, custom_registry);
+/// assert!(res1.is_ok());
+///
+/// let res2 = register_histogram_with_registry!("test_macro_histogram_2", "help", custom_registry);
+/// assert!(res2.is_ok());
+///
+/// let res3 = register_histogram_with_registry!("test_macro_histogram_4",
+///                                 "help",
+///                                 vec![1.0, 2.0], custom_registry);
+/// assert!(res3.is_ok());
+/// # }
+/// ```
+#[macro_export(local_inner_macros)]
+macro_rules! register_histogram_with_registry {
+    ($NAME:expr, $HELP:expr, $REGISTRY:expr) => {
+        register_histogram_with_registry!(histogram_opts!($NAME, $HELP), $REGISTRY)
+    };
+
+    ($NAME:expr, $HELP:expr, $BUCKETS:expr, $REGISTRY:expr) => {
+        register_histogram_with_registry!(histogram_opts!($NAME, $HELP, $BUCKETS), $REGISTRY)
+    };
+
+    ($HOPTS:expr, $REGISTRY:expr) => {{
+        let histogram = $crate::Histogram::with_opts($HOPTS).unwrap();
+        $REGISTRY
+            .register(Box::new(histogram.clone()))
+            .map(|_| histogram)
+    }};
+}
+
 /// Create a [`HistogramVec`] and registers to default registry.
 ///
 /// # Examples
@@ -393,5 +645,59 @@ macro_rules! register_histogram_vec {
 
     ($NAME:expr, $HELP:expr, $LABELS_NAMES:expr, $BUCKETS:expr) => {{
         register_histogram_vec!(histogram_opts!($NAME, $HELP, $BUCKETS), $LABELS_NAMES)
+    }};
+}
+
+/// Create a [`HistogramVec`] and registers to default registry.
+///
+/// # Examples
+///
+/// ```
+/// # #[macro_use] extern crate prometheus;
+/// # use prometheus::Registry;
+/// # use std::collections::HashMap;
+/// # fn main() {
+/// let mut labels = HashMap::new();
+/// labels.insert("mykey".to_string(), "myvalue".to_string());
+/// let custom_registry = Registry::new_custom(Some("myprefix".to_string()), Some(labels)).unwrap();
+///
+/// let opts = histogram_opts!("test_macro_histogram_vec_1", "help");
+/// let histogram_vec = register_histogram_vec_with_registry!(opts, &["a", "b"], custom_registry);
+/// assert!(histogram_vec.is_ok());
+///
+/// let histogram_vec =
+///     register_histogram_vec_with_registry!("test_macro_histogram_vec_2", "help", &["a", "b"], custom_registry);
+/// assert!(histogram_vec.is_ok());
+///
+/// let histogram_vec = register_histogram_vec_with_registry!("test_macro_histogram_vec_3",
+///                                             "help",
+///                                             &["test_label"],
+///                                             vec![0.0, 1.0, 2.0], custom_registry);
+/// assert!(histogram_vec.is_ok());
+/// # }
+/// ```
+#[macro_export(local_inner_macros)]
+macro_rules! register_histogram_vec_with_registry {
+    ($HOPTS:expr, $LABELS_NAMES:expr, $REGISTRY:expr) => {{
+        let histogram_vec = $crate::HistogramVec::new($HOPTS, $LABELS_NAMES).unwrap();
+        $REGISTRY
+            .register(Box::new(histogram_vec.clone()))
+            .map(|_| histogram_vec)
+    }};
+
+    ($NAME:expr, $HELP:expr, $LABELS_NAMES:expr, $REGISTRY:expr) => {{
+        register_histogram_vec_with_registry!(
+            histogram_opts!($NAME, $HELP),
+            $LABELS_NAMES,
+            $REGISTRY
+        )
+    }};
+
+    ($NAME:expr, $HELP:expr, $LABELS_NAMES:expr, $BUCKETS:expr, $REGISTRY:expr) => {{
+        register_histogram_vec_with_registry!(
+            histogram_opts!($NAME, $HELP, $BUCKETS),
+            $LABELS_NAMES,
+            $REGISTRY
+        )
     }};
 }
