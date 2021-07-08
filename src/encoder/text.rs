@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 use std::io::Write;
+use std::mem;
 
 use crate::errors::Result;
 use crate::histogram::BUCKET_LABEL;
@@ -24,6 +25,22 @@ impl TextEncoder {
     /// Create a new text encoder.
     pub fn new() -> TextEncoder {
         TextEncoder
+    }
+    pub fn encode_utf8(
+        &self,
+        metric_families: &[MetricFamily],
+        buf: &mut String,
+    ) -> Result<()> {
+        let mut bytes = mem::take(buf).into_bytes();
+        self.encode(metric_families, &mut bytes)?;
+        let text = String::from_utf8(bytes).unwrap_or_else(|_| unreachable!());
+        *buf = text;
+        Ok(())
+    }
+    pub fn encode_to_string(&self, metric_families: &[MetricFamily]) -> Result<String> {
+        let mut buf = String::new();
+        self.encode_utf8(metric_families, &mut buf)?;
+        Ok(buf)
     }
 }
 
@@ -394,5 +411,26 @@ test_summary_sum 15
 test_summary_count 5
 "##;
         assert_eq!(ans, str::from_utf8(writer.as_slice()).unwrap());
+    }
+
+    #[test]
+    fn test_text_encoder_to_string() {
+        let counter_opts = Opts::new("test_counter", "test help")
+            .const_label("a", "1")
+            .const_label("b", "2");
+        let counter = Counter::with_opts(counter_opts).unwrap();
+        counter.inc();
+
+        let mf = counter.collect();
+
+        let encoder = TextEncoder::new();
+        let txt = encoder.encode_to_string(&mf);
+        let txt = txt.unwrap();
+
+        let counter_ans = r##"# HELP test_counter test help
+# TYPE test_counter counter
+test_counter{a="1",b="2"} 1
+"##;
+        assert_eq!(counter_ans, txt.as_str());
     }
 }
