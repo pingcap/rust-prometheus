@@ -1,8 +1,7 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
 use std::borrow::Cow;
-use std::io::Write;
-use std::mem;
+use std::io::{self, Write};
 
 use crate::errors::Result;
 use crate::histogram::BUCKET_LABEL;
@@ -26,26 +25,31 @@ impl TextEncoder {
     pub fn new() -> TextEncoder {
         TextEncoder
     }
-    pub fn encode_utf8(
-        &self,
-        metric_families: &[MetricFamily],
-        buf: &mut String,
-    ) -> Result<()> {
-        let mut bytes = mem::take(buf).into_bytes();
-        self.encode(metric_families, &mut bytes)?;
-        let text = String::from_utf8(bytes).unwrap_or_else(|_| unreachable!());
-        *buf = text;
+    /// Appends metrics to a given `String` buffer.
+    ///
+    /// This is a convenience wrapper around `<TextEncoder as Encoder>::encode`.
+    pub fn encode_utf8(&self, metric_families: &[MetricFamily], buf: &mut String) -> Result<()> {
+        // Note: it's important to *not* re-validate UTF8-validity for the
+        // entirety of `buf`. Otherwise, repeatedly appending metrics to the
+        // same `buf` will lead to quadratic behavior. That's why we use
+        // `WriteUtf8` abstraction to skip the validation.
+        self.encode_impl(metric_families, &mut StringBuf(buf))?;
         Ok(())
     }
+    /// Converts metrics to `String`.
+    ///
+    /// This is a convenience wrapper around `<TextEncoder as Encoder>::encode`.
     pub fn encode_to_string(&self, metric_families: &[MetricFamily]) -> Result<String> {
         let mut buf = String::new();
         self.encode_utf8(metric_families, &mut buf)?;
         Ok(buf)
     }
-}
 
-impl Encoder for TextEncoder {
-    fn encode<W: Write>(&self, metric_families: &[MetricFamily], writer: &mut W) -> Result<()> {
+    fn encode_impl(
+        &self,
+        metric_families: &[MetricFamily],
+        writer: &mut dyn WriteUtf8,
+    ) -> Result<()> {
         for mf in metric_families {
             // Fail-fast checks.
             check_metric_family(mf)?;
@@ -54,21 +58,21 @@ impl Encoder for TextEncoder {
             let name = mf.get_name();
             let help = mf.get_help();
             if !help.is_empty() {
-                writer.write_all(b"# HELP ")?;
-                writer.write_all(name.as_bytes())?;
-                writer.write_all(b" ")?;
-                writer.write_all(escape_string(help, false).as_bytes())?;
-                writer.write_all(b"\n")?;
+                writer.write_all("# HELP ")?;
+                writer.write_all(name)?;
+                writer.write_all(" ")?;
+                writer.write_all(&escape_string(help, false))?;
+                writer.write_all("\n")?;
             }
 
             // Write `# TYPE` header.
             let metric_type = mf.get_field_type();
             let lowercase_type = format!("{:?}", metric_type).to_lowercase();
-            writer.write_all(b"# TYPE ")?;
-            writer.write_all(name.as_bytes())?;
-            writer.write_all(b" ")?;
-            writer.write_all(lowercase_type.as_bytes())?;
-            writer.write_all(b"\n")?;
+            writer.write_all("# TYPE ")?;
+            writer.write_all(name)?;
+            writer.write_all(" ")?;
+            writer.write_all(&lowercase_type)?;
+            writer.write_all("\n")?;
 
             for m in mf.get_metric() {
                 match metric_type {
@@ -152,6 +156,12 @@ impl Encoder for TextEncoder {
 
         Ok(())
     }
+}
+
+impl Encoder for TextEncoder {
+    fn encode<W: Write>(&self, metric_families: &[MetricFamily], writer: &mut W) -> Result<()> {
+        self.encode_impl(metric_families, &mut *writer)
+    }
 
     fn format_type(&self) -> &str {
         TEXT_FORMAT
@@ -164,30 +174,30 @@ impl Encoder for TextEncoder {
 /// not required), and the value. The function returns the number of bytes
 /// written and any error encountered.
 fn write_sample(
-    writer: &mut dyn Write,
+    writer: &mut dyn WriteUtf8,
     name: &str,
     name_postfix: Option<&str>,
     mc: &proto::Metric,
     additional_label: Option<(&str, &str)>,
     value: f64,
 ) -> Result<()> {
-    writer.write_all(name.as_bytes())?;
+    writer.write_all(name)?;
     if let Some(postfix) = name_postfix {
-        writer.write_all(postfix.as_bytes())?;
+        writer.write_all(postfix)?;
     }
 
     label_pairs_to_text(mc.get_label(), additional_label, writer)?;
 
-    writer.write_all(b" ")?;
-    writer.write_all(value.to_string().as_bytes())?;
+    writer.write_all(" ")?;
+    writer.write_all(&value.to_string())?;
 
     let timestamp = mc.get_timestamp_ms();
     if timestamp != 0 {
-        writer.write_all(b" ")?;
-        writer.write_all(timestamp.to_string().as_bytes())?;
+        writer.write_all(" ")?;
+        writer.write_all(&timestamp.to_string())?;
     }
 
-    writer.write_all(b"\n")?;
+    writer.write_all("\n")?;
 
     Ok(())
 }
@@ -202,32 +212,32 @@ fn write_sample(
 fn label_pairs_to_text(
     pairs: &[proto::LabelPair],
     additional_label: Option<(&str, &str)>,
-    writer: &mut dyn Write,
+    writer: &mut dyn WriteUtf8,
 ) -> Result<()> {
     if pairs.is_empty() && additional_label.is_none() {
         return Ok(());
     }
 
-    let mut separator = b"{";
+    let mut separator = "{";
     for lp in pairs {
         writer.write_all(separator)?;
-        writer.write_all(lp.get_name().as_bytes())?;
-        writer.write_all(b"=\"")?;
-        writer.write_all(escape_string(lp.get_value(), true).as_bytes())?;
-        writer.write_all(b"\"")?;
+        writer.write_all(&lp.get_name())?;
+        writer.write_all("=\"")?;
+        writer.write_all(&escape_string(lp.get_value(), true))?;
+        writer.write_all("\"")?;
 
-        separator = b",";
+        separator = ",";
     }
 
     if let Some((name, value)) = additional_label {
         writer.write_all(separator)?;
-        writer.write_all(name.as_bytes())?;
-        writer.write_all(b"=\"")?;
-        writer.write_all(escape_string(value, true).as_bytes())?;
-        writer.write_all(b"\"")?;
+        writer.write_all(name)?;
+        writer.write_all("=\"")?;
+        writer.write_all(&escape_string(value, true))?;
+        writer.write_all("\"")?;
     }
 
-    writer.write_all(b"}")?;
+    writer.write_all("}")?;
 
     Ok(())
 }
@@ -273,6 +283,27 @@ fn escape_string(v: &str, include_double_quote: bool) -> Cow<'_, str> {
         // The input string does not contain any characters that would need to
         // be escaped. Return it as it is.
         v.into()
+    }
+}
+
+trait WriteUtf8 {
+    fn write_all(&mut self, text: &str) -> io::Result<()>;
+}
+
+impl<W: Write> WriteUtf8 for W {
+    fn write_all(&mut self, text: &str) -> io::Result<()> {
+        Write::write_all(self, text.as_bytes())
+    }
+}
+
+/// Coherence forbids to impl `WriteUtf8` directly on `String`, need this
+/// wrapper as a work-around.
+struct StringBuf<'a>(&'a mut String);
+
+impl WriteUtf8 for StringBuf<'_> {
+    fn write_all(&mut self, text: &str) -> io::Result<()> {
+        self.0.push_str(text);
+        Ok(())
     }
 }
 
