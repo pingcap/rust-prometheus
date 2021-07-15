@@ -9,8 +9,8 @@ pub fn is_local_metric(metric_type: Ident) -> bool {
 
 pub fn to_non_local_metric_type(metric_type: Ident) -> Ident {
     let metric_type_str = metric_type.to_string();
-    if metric_type_str.starts_with("Local") {
-        Ident::new(&metric_type_str[5..], Span::call_site())
+    if let Some(stripped) = metric_type_str.strip_prefix("Local") {
+        Ident::new(stripped, Span::call_site())
     } else {
         metric_type
     }

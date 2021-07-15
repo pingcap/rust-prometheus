@@ -9,9 +9,54 @@ on:
 env:
   CARGO_TERM_COLOR: always
   # Pinned toolchain for linting and benchmarks
-  ACTIONS_LINTS_TOOLCHAIN: 1.47.0
+  ACTIONS_LINTS_TOOLCHAIN: 1.53.0
+  EXTRA_FEATURES: "protobuf push process"
 
 jobs:
+  tests-stable:
+    name: "Tests, stable toolchain"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: "stable"
+          default: true
+      - name: cargo build
+        run: cargo build
+      - name: cargo test
+        run: cargo test
+      - name: cargo test (extra features)
+        run: cargo test --no-default-features --features="${{ env['EXTRA_FEATURES'] }}"
+      - name: cargo package
+        run : cargo package && cargo package --manifest-path static-metric/Cargo.toml
+  tests-other-channels:
+    name: "Tests, unstable toolchain"
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      matrix:
+        channel:
+          - "beta"
+          - "nightly"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.channel }}
+          default: true
+      - name: cargo build
+        run: cargo build
+      - name: cargo test
+        run: cargo test
+      - name: cargo build (static-metric)
+        run: cargo build -p prometheus-static-metric --examples --no-default-features --features="${{ env['EXTRA_FEATURES'] }}"
+      - name: cargo test (static-metric)
+        run: cargo test -p prometheus-static-metric --no-default-features --features="${{ env['EXTRA_FEATURES'] }}"
   linting:
     name: "Lints, pinned toolchain"
     runs-on: ubuntu-latest
@@ -21,15 +66,13 @@ jobs:
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: ${{ env['ACTIONS_LINTS_TOOLCHAIN']  }}
+          toolchain: ${{ env['ACTIONS_LINTS_TOOLCHAIN'] }}
           default: true
           components: rustfmt, clippy
       - name: cargo fmt (check)
         run: cargo fmt --all -- --check -l
       - name: cargo clippy
-        run: cargo clippy --all -- -D clippy
-      - name: cargo package
-        run : cargo package && cargo package --manifest-path static-metric/Cargo.toml
+        run: cargo clippy --all -- -D clippy::all
   criterion:
     name: "Benchmarks (criterion)"
     runs-on: ubuntu-latest
